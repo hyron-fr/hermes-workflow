@@ -72,7 +72,7 @@ def _bridge_script() -> str:
     candidates = [
         home / "scripts" / "gh_kanban_bridge.py",
         home / "scripts" / "gh_kanban_bridge.sh",
-        WORKFLOW_ROOT / "bridge" / "gh_kanban_bridge.py",
+        WORKFLOW_ROOT / "pipeline" / "gh_kanban_bridge.py",
     ]
     for c in candidates:
         if c.exists():

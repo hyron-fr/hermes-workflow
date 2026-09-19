@@ -6,7 +6,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 import pytest
 
-PATH = str(REPO / "bridge" / "pj_docs_memory.py")
+PATH = str(REPO / "pipeline" / "pj_docs_memory.py")
 
 
 @pytest.fixture(scope="module")

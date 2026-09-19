@@ -9,7 +9,7 @@ Usage :
       -> envoie le PNG dans un thread Discord (multipart).
 
 Le rendu passe par un HTML temporaire embarquant le diagramme + mermaid
-local (bridge/mermaid.min.js), screenshoté par Firefox headless (le snap
+local (assets/mermaid.min.js), screenshoté par Firefox headless (le snap
 ne peut pas écrire dans /tmp, d'où le tmpdir sous $HOME).
 """
 
@@ -23,8 +23,9 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-REPO = Path.home() / "hermes-experiment"
-MERMAID_JS = REPO / "bridge" / "mermaid.min.js"
+# Racine du depot, resolue depuis ce fichier (aucun chemin absolu).
+REPO = Path(__file__).resolve().parents[3]
+MERMAID_JS = REPO / "assets" / "mermaid.min.js"
 TOKEN_FILE = Path.home() / ".hermes/profiles/gh-triage/.env"
 # Firefox snap ne peut PAS écrire dans les répertoires cachés (.hermes) :
 # le tmpdir doit être un dossier non caché du home.

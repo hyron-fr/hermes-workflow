@@ -223,7 +223,7 @@ d'exclusion trop large). Deux pièges de périmètre vécus :
 
 ## Garde-fou d'admission (isolation des boards pj-*)
 
-`pj_spawn_guard.py` (repo `hermes-experiment/bridge/`, copie live
+`pj_spawn_guard.py` (repo `hermes-experiment/pipeline/`, copie live
 `${HERMES_WORKFLOW}/pipeline/`) refuse tout travail hors pipeline sur un board `pj-*` : il bloque la
 carte dont l'`assignee` n'est pas dans `DEFAULT_ALLOWED`. Enregistré sur DEUX hooks par
 profil de gateway : `on_kanban_dispatch_tick` (tire APRÈS relâchement du verrou de

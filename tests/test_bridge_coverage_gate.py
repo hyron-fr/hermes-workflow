@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-PATH = str(REPO / "bridge" / "gh_kanban_bridge.py")
+PATH = str(REPO / "pipeline" / "gh_kanban_bridge.py")
 
 
 @pytest.fixture(scope="module")

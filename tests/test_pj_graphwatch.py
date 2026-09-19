@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 import pytest
 
-PATH = str(REPO / "bridge" / "pj_graphwatch.py")
+PATH = str(REPO / "pipeline" / "pj_graphwatch.py")
 
 DOC = {"issue": 3, "repo": "dino-game", "branch": "wt/issue-3-x", "slices": [
     {"k": 1, "slug": "a", "depends_on": [],
@@ -40,9 +40,11 @@ def _plan(gw):
 
 
 def test_worktree_mk_is_upstream_of_all_slices(gw):
+    """worktree-mk dépend de t5 (le GO), pas de t6 : le worktree partagé doit
+    exister AVANT test-k/dev-k, sinon le peer programming n'a pas de terrain."""
     by = {c["key"]: c for c in _plan(gw)["cards"]}
     assert by["worktree-mk"]["assignee"] == "pj-dev"
-    assert by["worktree-mk"]["parents"] == ["t6"]
+    assert by["worktree-mk"]["parents"] == ["t5x"]
     # on compare à la constante du module : le chemin du repo est un parametre,
     # pas une valeur codee en dur (le test doit suivre l'environnement reel)
     assert by["worktree-mk"]["workspace"].startswith("worktree:")
@@ -100,8 +102,13 @@ def test_t6_waits_only_for_t5(gw):
 
 def test_anti_deadlock_conv_and_doc_are_parents_of_t6(gw):
     links = _plan(gw)["links"]
+    # Sens : `link <parent> <child>` -> l'enfant ATTEND le parent.
+    # [key, "t6"] = key est parent de t6, donc t6 attend la production.
+    # L'écrire à l'envers (["t6", key]) ferait attendre la PRODUCTION jusqu'à t6 :
+    # c'est le deadlock que cette carte doit précisément empêcher.
     for key in ("conv-1", "conv-2", "doc-1", "doc-2", "doc-review"):
-        assert ["t6", key] in links, f"{key} doit être parent de t6"
+        assert [key, "t6"] in links, f"{key} doit être parent de t6 (anti-deadlock)"
+        assert ["t6", key] not in links, f"{key} : sens inversé = deadlock"
 
 
 def test_worktree_rm_is_post_merge(gw):

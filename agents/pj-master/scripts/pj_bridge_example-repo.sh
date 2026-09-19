@@ -8,4 +8,4 @@ export KANBAN_BOARD=pj-example-repo
 export KANBAN_ASSIGNEE=pj-master
 export BOT_GRACE_SECONDS=0  # pas de bot gh-triage sur ces boards
 export PJ_IMPORT_TRIAGE=1  # racine en triage ; déploiement par cron agent pj-master
-exec python3 ${HERMES_WORKFLOW}/bridge/gh_kanban_bridge.py "$@"
+exec python3 ${HERMES_WORKFLOW}/pipeline/gh_kanban_bridge.py "$@"

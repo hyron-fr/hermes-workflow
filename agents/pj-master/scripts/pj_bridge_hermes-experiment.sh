@@ -7,4 +7,4 @@ export KANBAN_BOARD=pj-hermes-experiment
 export KANBAN_ASSIGNEE=pj-master
 export BOT_GRACE_SECONDS=0
 export PJ_IMPORT_TRIAGE=1
-exec python3 ${HERMES_WORKFLOW}/bridge/gh_kanban_bridge.py "$@"
+exec python3 ${HERMES_WORKFLOW}/pipeline/gh_kanban_bridge.py "$@"

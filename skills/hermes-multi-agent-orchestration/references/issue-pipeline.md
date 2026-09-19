@@ -26,7 +26,7 @@ t6 → PR ouverte (sans merge) → issue fermée par le pont push.
    `KANBAN_BOARD=pj-<repo>`, `KANBAN_ASSIGNEE=<orchestrateur>`,
    `BOT_GRACE_SECONDS=0` si aucun bot de drill ne dessert le repo,
    `PJ_IMPORT_TRIAGE=1` (import en triage — la racine ne doit jamais être
-   claimable comme worker) ; `exec python3 <repo canonique>/bridge/
+   claimable comme worker) ; `exec python3 <repo canonique>/pipeline/
    gh_kanban_bridge.py "$@"`.
 5. Cron `--no-agent` */5 par repo, créé SUR LE PROFIL ORCHESTRATEUR (HERMES_HOME
    du profil) ; stdout vide = tick muet.

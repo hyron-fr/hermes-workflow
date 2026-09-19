@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 import pytest
 
-PATH = str(REPO / "bridge" / "pj_room.py")
+PATH = str(REPO / "pipeline" / "pj_room.py")
 
 
 @pytest.fixture(scope="module")

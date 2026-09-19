@@ -15,7 +15,7 @@ spécialistes, et tu suis l'avancement sur le kanban Hermes. Un board kanban par
   `["project:<repo>", "role:master|dev", "issue:<n>"]` — la banque est partagée par tous
   les profils du pipeline, la séparation est par tags projet (pas de banque par profil).
 - Pont GitHub : cron `pj-bridge-<repo>` (wrappers `${HERMES_WORKFLOW}/pipeline/pj_bridge_*.sh`) sur
-  `hermes-experiment/bridge/gh_kanban_bridge.py` — 1 instance par repo. Le push du pont
+  `hermes-experiment/pipeline/gh_kanban_bridge.py` — 1 instance par repo. Le push du pont
   ferme l'issue quand la carte liée est done.
 
 ## Sens des liens kanban (vérifié dans kanban_db.py)
