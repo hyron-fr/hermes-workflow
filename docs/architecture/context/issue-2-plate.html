@@ -1,0 +1,446 @@
+<!doctype html><html lang="fr"><meta charset="utf-8">
+<title>Issue #2 — planche comparative avant/après</title>
+<style>
+  :root { --ink:#1b1f24; --mut:#5b6672; --line:#d8dee6; --ok:#0a7d3f; --warn:#a8570a; --bg:#fff; }
+  * { box-sizing:border-box }
+  body { font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+         color:var(--ink); background:var(--bg); margin:0; padding:26px 30px; width:1180px }
+  h1 { font-size:22px; margin:0 0 2px }
+  h2 { font-size:15px; margin:26px 0 8px; padding-bottom:4px; border-bottom:2px solid var(--ink) }
+  h3 { font-size:13px; margin:0 0 6px; font-weight:600 }
+  .sub { color:var(--mut); margin:0 0 4px }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px;
+            font-weight:700; letter-spacing:.3px }
+  .proto { background:#fff3cd; color:#7a5300; border:1px solid #e6c86a }
+  .gate { background:#e7f4ec; color:var(--ok); border:1px solid #9fd0b4 }
+  table { border-collapse:collapse; width:100%; margin:6px 0 2px }
+  th,td { border:1px solid var(--line); padding:5px 8px; text-align:left; vertical-align:top }
+  th { background:#f4f6f9; font-size:11px; text-transform:uppercase; letter-spacing:.4px;
+        color:var(--mut) }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }
+  td.k { text-align:center; font-weight:700; width:28px }
+  code { font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+          background:#f4f6f9; border:1px solid #e6eaf0; border-radius:3px; padding:1px 4px }
+  .ba th { width:50% }
+  .before { background:#fff5f5 } .after { background:#f2fbf5 }
+  .before, .after { font:12px/1.5 ui-monospace,Menlo,monospace }
+  .extract { margin:10px 0 14px }
+  .file { color:var(--mut); font-weight:400; font-size:11px }
+  .cards { display:flex; gap:14px; margin-top:6px }
+  .card { flex:1; border:1px solid var(--line); border-radius:6px; padding:10px 12px }
+  .card h4 { margin:0 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.4px;
+              color:var(--mut) }
+  .big { font-size:20px; font-weight:700 }
+  .note { color:var(--mut); font-size:11.5px; margin:4px 0 0 }
+  .gatebox { border:1px solid #9fd0b4; background:#f2fbf5; border-radius:6px;
+              padding:10px 12px; margin:8px 0 0 }
+  .warnbox { border:1px solid #e6c86a; background:#fffdf3; border-radius:6px;
+              padding:10px 12px; margin:8px 0 0 }
+  footer { margin-top:22px; color:var(--mut); font-size:11px;
+            border-top:1px solid var(--line); padding-top:8px }
+</style>
+<h1>Issue #2 « Rewrite in english » — planche comparative avant / après</h1>
+<p class="sub">Dépôt <code>hyron-fr/hermes-workflow</code> · branche
+<code>wt/issue-2-rewrite-in-english</code> · base <code>dev</code> + <code>main</code> intégrée
+(20 <code>.md</code> / 3 052 lignes à traduire)</p>
+<p><span class="badge proto">PROTOTYPE : oui — artefact à valider AVANT la production</span>
+&nbsp;<span class="badge gate">gate humain : go / no-go sur cette planche</span></p>
+
+<h2>1. Ce que la planche doit permettre de trancher</h2>
+<div class="cards">
+  <div class="card"><h4>Registre de langue</h4>
+    <div class="big">prose EN, contrats FR</div>
+    <p class="note">La prose passe en anglais ; les littéraux que la machine relit restent
+    français, verbatim.</p></div>
+  <div class="card"><h4>Corpus à traduire</h4>
+    <div class="big">20 fichiers</div>
+    <p class="note">3 052 lignes, dont 1 559 portent un diacritique.
+    Les 3 notes du vault de l'issue sont déjà anglaises (hors corpus).</p></div>
+  <div class="card"><h4>Découpage</h4>
+    <div class="big">11 slices</div>
+    <p class="note">1 planche + 1 outil de scan + 9 slices de traduction (≤ 400 lignes,
+    sauf une exception assumée).</p></div>
+</div>
+
+<h2>2. Extrait avant / après, par CLASSE de document</h2>
+<div class="extract">
+      <h3>Skill / doc technique <span class="file">skills/pj-pipeline/SKILL.md</span></h3>
+      <table class="ba">
+        <tr><th>AVANT</th><th>APRÈS</th></tr>
+        <tr><td class="before">Les workers dev suivent le cycle complet : worktree, tests, convergence.</td><td class="after">Dev workers follow the full cycle: worktree, tests, convergence.</td></tr>
+      </table>
+    </div>
+<div class="extract">
+      <h3>SOUL d'agent (gros volume contractuel) <span class="file">agents/pj-master/SOUL.md</span></h3>
+      <table class="ba">
+        <tr><th>AVANT</th><th>APRÈS</th></tr>
+        <tr><td class="before">Une demande de modification sur une livraison en vol appartient à l'issue qui la porte.</td><td class="after">A change request on an in-flight delivery belongs to the issue that carries it.</td></tr>
+      </table>
+    </div>
+<div class="extract">
+      <h3>README / CONTRIBUTING <span class="file">CONTRIBUTING.md</span></h3>
+      <table class="ba">
+        <tr><th>AVANT</th><th>APRÈS</th></tr>
+        <tr><td class="before">Avant toute contribution, vérifier que la branche dev est à jour.</td><td class="after">Before contributing, check that the dev branch is up to date.</td></tr>
+      </table>
+    </div>
+<div class="extract">
+      <h3>Gabarit de ticket (lu par un check) <span class="file">workflows/templates/ticket.md</span></h3>
+      <table class="ba">
+        <tr><th>AVANT</th><th>APRÈS</th></tr>
+        <tr><td class="before">## Critères d'acceptation<br>(liste numérotée, mesurable)</td><td class="after">## Critères d'acceptation<br>(numbered, measurable list)</td></tr>
+      </table>
+    </div>
+<div class="extract">
+      <h3>Note de vault (MOC) <span class="file">docs/architecture/README.md</span></h3>
+      <table class="ba">
+        <tr><th>AVANT</th><th>APRÈS</th></tr>
+        <tr><td class="before">- [[issue-2]] — Rewrite in english (documentation-wide translation).</td><td class="after">- [[issue-1]] — Full pipeline cycle check.<br>- [[issue-2]] — Rewrite in english (documentation-wide translation).</td></tr>
+      </table>
+    </div>
+<p class="note">Les exemples ci-dessus montrent la règle : la phrase change de langue,
+les 5 titres de section et les mots-clés Gherkin ne changent pas — ce sont eux que le
+linter lit.</p>
+
+<h2>3. Littéraux GELÉS — jamais traduits (le contrat machine reste français)</h2>
+<table><tr><th style="width:32%">littéral</th><th>pourquoi il ne peut pas être traduit</th></tr>
+<tr><td><code>Contexte &amp; Objectif</code></td><td>les 5 titres de section de <code>pj_card_lint</code></td></tr>
+<tr><td><code>Critères d'acceptation</code></td><td>4 des 5 titres sont FR-only : le linter ne connaît pas <code>Context &amp; Objective</code></td></tr>
+<tr><td><code>DoR &amp; DoD</code></td><td>seul titre déjà accepté en anglais</td></tr>
+<tr><td><code>Considérations techniques</code></td><td>FR-only</td></tr>
+<tr><td><code>Hors-scope</code></td><td>FR-only</td></tr>
+<tr><td><code>Fonctionnalité: / Scénario:</code></td><td>mots-clés Gherkin</td></tr>
+<tr><td><code>Étant donné / Quand / Alors</code></td><td>étapes Gherkin</td></tr>
+<tr><td><code>Importé depuis</code></td><td>marqueur de pont — lu par le bridge, le deployeur et <code>pj_card_lint.is_spec</code></td></tr>
+<tr><td><code>ROOM:</code></td><td>marqueur de room — regex de <code>pj_room_keeper</code></td></tr>
+<tr><td><code>jamais / ne pas</code></td><td>vocabulaire de garde-fou : le linter ne connaît que <code>no </code>, <code>forbidden</code>, <code>must not</code></td></tr></table>
+<div class="warnbox"><b>Pourquoi c'est un gate et pas un détail.</b> Une carte écrite
+entièrement en anglais est refusée par <code>pj_card_lint</code> (mesuré : 4 sections
+« manquantes » sur 5) — traduire ces titres rendrait le pipeline entier infranchissable à
+t5. Le fichier d'exclusion est donc <b>versionné</b>, chaque entrée portant le script
+et la ligne qui la relit.</div>
+
+<h2>4. Tableau d'impact mesuré — par slice</h2>
+<table>
+  <tr><th class="n">k</th><th>slice — titre et fichiers</th><th class="n">fichiers</th>
+      <th class="n">lignes</th>
+      <th class="n">dont accentuées</th><th>dimensionnement INVEST</th></tr>
+<tr><td class='k'>1</td><td>Planche comparative — l'ARTEFACT de t3, validé à ce gate<br><code>preview-issue-2-plate</code></td><td class='n'>2</td><td class='n'>0</td><td class='n'>0</td><td>fichiers à CRÉER (pas de traduction) — dimensionnement en volume de code, pas en lignes traduites</td></tr>
+<tr><td class='k'>2</td><td>Outil de scan de langue + fichier d'exclusion gelé + test de l'outil<br><code>lang-lint-outil</code></td><td class='n'>3</td><td class='n'>0</td><td class='n'>0</td><td>fichiers à CRÉER (pas de traduction) — dimensionnement en volume de code, pas en lignes traduites</td></tr>
+<tr><td class='k'>3</td><td>Documents racine : README, CONTRIBUTING, gabarit de ticket<br><code>readme-contributing-ticket</code></td><td class='n'>3</td><td class='n'>319</td><td class='n'>121</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>4</td><td>SOUL de pj-master — le fichier le plus exposé aux citations gelées<br><code>soul-pj-master</code></td><td class='n'>1</td><td class='n'>337</td><td class='n'>190</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>5</td><td>Les trois SOUL de production (dev, doc, test)<br><code>soul-dev-doc-test</code></td><td class='n'>3</td><td class='n'>292</td><td class='n'>145</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>6</td><td>Skill du pont GitHub↔kanban + ses deux références<br><code>skill-gh-kanban-bridge</code></td><td class='n'>3</td><td class='n'>342</td><td class='n'>138</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>7</td><td>Skills de pipeline + skill de gate<br><code>skills-pipelines-gate</code></td><td class='n'>3</td><td class='n'>225</td><td class='n'>92</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>8</td><td>Skill d'orchestration — le plus gros fichier du dépôt<br><code>skill-orchestration</code></td><td class='n'>1</td><td class='n'>542</td><td class='n'>360</td><td><b>exception Small assumée : 1 fichier, 1 domaine, 1 journée d’agent</b></td></tr>
+<tr><td class='k'>9</td><td>Références du vault + README du pipeline<br><code>docs-refs-pipeline-readme</code></td><td class='n'>4</td><td class='n'>389</td><td class='n'>161</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>10</td><td>Skill du pipeline pj<br><code>skill-pj-pipeline</code></td><td class='n'>1</td><td class='n'>317</td><td class='n'>181</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>11</td><td>Référence du pipeline d'issue — le plus dense en contrats<br><code>ref-issue-pipeline</code></td><td class='n'>1</td><td class='n'>289</td><td class='n'>171</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+  <tr><td class="k">—</td><td><b>corpus de traduction</b></td>
+      <td class="n"><b>20</b></td><td class="n"><b>3 052</b></td>
+      <td class="n"><b>1 559</b></td><td>aucun fichier non assigné, aucun doublon</td></tr>
+</table>
+
+<h2>5. Notes du vault de l'issue — hors corpus, traitées explicitement</h2>
+<table><tr><th>fichier</th><th class="n">lignes</th><th class="n">accentuées</th>
+<th>traitement</th></tr>
+<tr><td><code>docs/architecture/README.md</code></td><td class='n'>19</td><td class='n'>0</td><td>déjà en anglais — hors corpus</td></tr>
+<tr><td><code>docs/functional/README.md</code></td><td class='n'>19</td><td class='n'>0</td><td>déjà en anglais — hors corpus</td></tr>
+<tr><td><code>docs/architecture/context/issue-2.md</code></td><td class='n'>168</td><td class='n'>5</td><td>déjà anglaise : ses accents sont des <b>citations</b> du contrat FR (famille <code>citation</code> du gel)</td></tr></table>
+<div class="warnbox"><b>Conflit de fusion réel avec l'issue #1.</b>
+<code>docs/architecture/README.md</code> est le MOC du vault : les deux issues en vol le
+créent. Mesuré par <code>git merge-tree</code> : conflit <b>ajout/ajout symétrique</b>, et
+il ne disparaît PAS en listant les deux issues (rc=1 dans les deux cas). Résolution
+attendue au rebase : garder <b>les deux lignes</b> — <code>[[issue-1]]</code> ET
+<code>[[issue-2]]</code> (vérifié conforme au linter, exit 0).</div>
+
+<h2>6. Ce que la planche ne décide pas</h2>
+<ul>
+  <li>Le code <code>.py</code>/<code>.sh</code>, les commentaires, les docstrings :
+      hors périmètre (Q1=A). Les copies exécutées par les crons ne sont pas touchées (Q3=A).</li>
+  <li><code>pj_card_lint</code> n'est pas rendu bilingue (Q2=A) : on gèle, on ne patche pas.</li>
+  <li>Aucun merge n'est effectué : la PR est ouverte en draft au gate t6.</li>
+</ul>
+
+<footer>Artefact produit par la carte t4 (<code>t_89588b94</code>) — board
+<code>pj-hermes-workflow</code> · chiffres mesurés sur l'arbre réel, jamais estimés ·
+rendu PNG par <code>chromium headless_shell</code>.</footer>
+<script type="application/json" id="plate-ledger">
+{
+  "issue": 2,
+  "artifact": "comparative before/after plate (t3 ARTEFACT, ratified by the human at the t5 gate)",
+  "repo": "hyron-fr/hermes-workflow",
+  "branch": "wt/issue-2-rewrite-in-english",
+  "unit": "lines",
+  "character_class": "latin letters carrying a diacritic or a latin ligature, lowercase and uppercase",
+  "character_class_chars": "àâäçéèêëîïôöùûüÿœæñÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŸŒÆÑ",
+  "corpus": {
+    "files": 20,
+    "lines": 3052,
+    "accented_lines": 1559
+  },
+  "slices": [
+    {
+      "k": 1,
+      "slug": "preview-issue-2-plate",
+      "kind": "create",
+      "files": {},
+      "lines": 0,
+      "accented_lines": 0
+    },
+    {
+      "k": 2,
+      "slug": "lang-lint-outil",
+      "kind": "create",
+      "files": {},
+      "lines": 0,
+      "accented_lines": 0
+    },
+    {
+      "k": 3,
+      "slug": "readme-contributing-ticket",
+      "kind": "translate",
+      "files": {
+        "README.md": {
+          "lines": 162,
+          "accented_lines": 53
+        },
+        "CONTRIBUTING.md": {
+          "lines": 142,
+          "accented_lines": 63
+        },
+        "workflows/templates/ticket.md": {
+          "lines": 15,
+          "accented_lines": 5
+        }
+      },
+      "lines": 319,
+      "accented_lines": 121
+    },
+    {
+      "k": 4,
+      "slug": "soul-pj-master",
+      "kind": "translate",
+      "files": {
+        "agents/pj-master/SOUL.md": {
+          "lines": 337,
+          "accented_lines": 190
+        }
+      },
+      "lines": 337,
+      "accented_lines": 190
+    },
+    {
+      "k": 5,
+      "slug": "soul-dev-doc-test",
+      "kind": "translate",
+      "files": {
+        "agents/pj-dev/SOUL.md": {
+          "lines": 80,
+          "accented_lines": 43
+        },
+        "agents/pj-doc/SOUL.md": {
+          "lines": 108,
+          "accented_lines": 51
+        },
+        "agents/pj-test/SOUL.md": {
+          "lines": 104,
+          "accented_lines": 51
+        }
+      },
+      "lines": 292,
+      "accented_lines": 145
+    },
+    {
+      "k": 6,
+      "slug": "skill-gh-kanban-bridge",
+      "kind": "translate",
+      "files": {
+        "skills/gh-kanban-bridge/SKILL.md": {
+          "lines": 77,
+          "accented_lines": 39
+        },
+        "skills/gh-kanban-bridge/references/SOUL-template.md": {
+          "lines": 98,
+          "accented_lines": 58
+        },
+        "skills/gh-kanban-bridge/references/setup.md": {
+          "lines": 167,
+          "accented_lines": 41
+        }
+      },
+      "lines": 342,
+      "accented_lines": 138
+    },
+    {
+      "k": 7,
+      "slug": "skills-pipelines-gate",
+      "kind": "translate",
+      "files": {
+        "skills/hermes-kanban-multiagent-pipelines/SKILL.md": {
+          "lines": 111,
+          "accented_lines": 48
+        },
+        "skills/hermes-kanban-multiagent-pipelines/references/activating-kanban.md": {
+          "lines": 68,
+          "accented_lines": 29
+        },
+        "skills/kanban-gate/SKILL.md": {
+          "lines": 46,
+          "accented_lines": 15
+        }
+      },
+      "lines": 225,
+      "accented_lines": 92
+    },
+    {
+      "k": 8,
+      "slug": "skill-orchestration",
+      "kind": "translate",
+      "files": {
+        "skills/hermes-multi-agent-orchestration/SKILL.md": {
+          "lines": 542,
+          "accented_lines": 360
+        }
+      },
+      "lines": 542,
+      "accented_lines": 360
+    },
+    {
+      "k": 9,
+      "slug": "docs-refs-pipeline-readme",
+      "kind": "translate",
+      "files": {
+        "skills/hermes-multi-agent-orchestration/references/hosted-rooms.md": {
+          "lines": 136,
+          "accented_lines": 49
+        },
+        "skills/hermes-multi-agent-orchestration/references/kanban-builtins.md": {
+          "lines": 55,
+          "accented_lines": 22
+        },
+        "skills/pj-pipeline/references/graph-manifest.md": {
+          "lines": 95,
+          "accented_lines": 51
+        },
+        "pipeline/README.md": {
+          "lines": 103,
+          "accented_lines": 39
+        }
+      },
+      "lines": 389,
+      "accented_lines": 161
+    },
+    {
+      "k": 10,
+      "slug": "skill-pj-pipeline",
+      "kind": "translate",
+      "files": {
+        "skills/pj-pipeline/SKILL.md": {
+          "lines": 317,
+          "accented_lines": 181
+        }
+      },
+      "lines": 317,
+      "accented_lines": 181
+    },
+    {
+      "k": 11,
+      "slug": "ref-issue-pipeline",
+      "kind": "translate",
+      "files": {
+        "skills/hermes-multi-agent-orchestration/references/issue-pipeline.md": {
+          "lines": 289,
+          "accented_lines": 171
+        }
+      },
+      "lines": 289,
+      "accented_lines": 171
+    }
+  ],
+  "outside_corpus": [
+    {
+      "path": "docs/architecture/README.md",
+      "lines": 19,
+      "accented_lines": 0,
+      "why": "already English — vault MOC (architecture section)"
+    },
+    {
+      "path": "docs/functional/README.md",
+      "lines": 19,
+      "accented_lines": 0,
+      "why": "already English — vault MOC (functional section)"
+    },
+    {
+      "path": "docs/architecture/context/issue-2.md",
+      "lines": 168,
+      "accented_lines": 5,
+      "why": "already English — its accents are citations of the frozen French contract"
+    }
+  ],
+  "frozen_literals": [
+    {
+      "literal": "Contexte & Objectif",
+      "read_by": "pipeline/pj_card_lint.py:33",
+      "family": "sect"
+    },
+    {
+      "literal": "Critères d'acceptation",
+      "read_by": "pipeline/pj_card_lint.py:34",
+      "family": "sect"
+    },
+    {
+      "literal": "DoR & DoD",
+      "read_by": "pipeline/pj_card_lint.py:35",
+      "family": "sect"
+    },
+    {
+      "literal": "Considérations techniques",
+      "read_by": "pipeline/pj_card_lint.py:36",
+      "family": "sect"
+    },
+    {
+      "literal": "Hors-scope",
+      "read_by": "pipeline/pj_card_lint.py:37",
+      "family": "sect"
+    },
+    {
+      "literal": "Fonctionnalité:",
+      "read_by": "pipeline/pj_card_lint.py:39",
+      "family": "gherkin"
+    },
+    {
+      "literal": "Scénario:",
+      "read_by": "pipeline/pj_card_lint.py:40",
+      "family": "gherkin"
+    },
+    {
+      "literal": "Étant donné / Quand / Alors",
+      "read_by": "pipeline/pj_card_lint.py:41",
+      "family": "gherkin"
+    },
+    {
+      "literal": "Importé depuis",
+      "read_by": "pipeline/pj_pipeline_deployer.py:270",
+      "family": "pont"
+    },
+    {
+      "literal": "ROOM:",
+      "read_by": "pipeline/pj_room_keeper.py:76",
+      "family": "room"
+    },
+    {
+      "literal": "jamais / ne pas",
+      "read_by": "pipeline/pj_card_lint.py:44",
+      "family": "guardrail"
+    }
+  ],
+  "provenance": {
+    "ratified_artifact_sha256": "14b7bfa7b23f80e2e945bd36cb75a555280a800f18f95c3a8fd4680d874b2fe1",
+    "ratified_artifact_md5": "38c75499f2a85fe97ed251a94487061b",
+    "ledger_added_by": "slice 1 dev (t_f8988040) — machine block, not rendered",
+    "measured_at": "4c34c95c38a4f2bac1111a3dd439dbedfd132196"
+  }
+}
+</script>
+</html>
