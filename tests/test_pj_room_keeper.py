@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 import pytest
 
-PATH = str(REPO / "bridge" / "pj_room_keeper.py")
+PATH = str(REPO / "pipeline" / "pj_room_keeper.py")
 
 T4_BODY = ("1er jet de spec + sous-tâches pour l'issue #8, à partir des handoffs t1/t2/t3.\n"
            "ROOM: pj-dino-game-issue-8\n")

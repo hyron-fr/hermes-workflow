@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 import pytest
 
-PATH = str(REPO / "bridge" / "pj_coverage_gate.py")
+PATH = str(REPO / "pipeline" / "pj_coverage_gate.py")
 
 COV_JSON = {
     "files": {

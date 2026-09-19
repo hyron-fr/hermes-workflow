@@ -32,7 +32,7 @@ GH_REPO_OWNER = "hyron-fr"
 ANCHOR_ROOT = "${HOME}/pj-repos"
 PROFILE_HOME = "${HOME}/.hermes/profiles/pj-master"
 PROFILE_SCRIPTS = os.path.join(PROFILE_HOME, "scripts")
-BRIDGE_PATH = str(WORKFLOW_ROOT / "bridge" / "gh_kanban_bridge.py")
+BRIDGE_PATH = str(WORKFLOW_ROOT / "pipeline" / "gh_kanban_bridge.py")
 DEPLOYER_PATH = os.path.join(PROFILE_SCRIPTS, "pj_pipeline_deployer.py")
 
 VERBOSE = os.environ.get("PJ_WATCH_VERBOSE") == "1"

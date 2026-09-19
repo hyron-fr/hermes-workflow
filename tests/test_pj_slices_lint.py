@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 import pytest
 
-PATH = str(REPO / "bridge" / "pj_slices_lint.py")
+PATH = str(REPO / "pipeline" / "pj_slices_lint.py")
 
 GOOD_TEST_BODY = """1. Contexte & Objectif
 Objectif : la persistance du high score est garantie.

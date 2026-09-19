@@ -37,13 +37,17 @@ n'intervient que là où il faut juger. Un pipeline au repos coûte zéro token.
 
 | chemin | contenu |
 |---|---|
-| `bridge/` | pont GitHub ↔ kanban, hooks, garde-fous d'admission |
-| `pipeline/` | outils déterministes (construction de graphe, linters, portes de qualité) |
-| `agents/` | `SOUL.md` de chaque profil + `config.yaml.example` **assaini** |
+| `pipeline/` | **tous** les outils : pont GitHub↔kanban, construction de graphe, linters, portes de qualité, hooks, garde-fous d'admission |
+| `agents/` | `SOUL.md` de chaque profil + `config.yaml.example` **assaini** (les wrappers de cron vivent dans `agents/pj-master/scripts/`) |
 | `skills/` | skills Hermes du projet (procédures réutilisables) |
 | `workflows/` | schémas et templates de workflow YAML |
 | `plugins/` | plugins de l'app desktop (boutons Discord, UI dashboard) |
+| `assets/` | ressources de rendu (mermaid embarqué) |
 | `tests/` | 113 tests, sans dépendance externe |
+
+> **Une seule copie par fichier.** Le dossier `bridge/` a existé et dupliquait 12
+> fichiers de `pipeline/` ; l'un d'eux (`pj_graphwatch.py`) avait divergé de 382
+> lignes. Les doublons ont été supprimés — un fichier vit à un seul endroit.
 
 ---
 

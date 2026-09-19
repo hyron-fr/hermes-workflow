@@ -70,7 +70,9 @@ BOARD = os.environ.get("PJ_BOARD", "")
 VERBOSE = os.environ.get("PJ_VERBOSE") == "1"
 DRY = os.environ.get("PJ_DRY_RUN") == "1"
 SPECS_ROOT = Path.home() / ".hermes" / "kanban" / "boards"
-ANCHOR_ROOT = "${HOME}/pj-repos"
+# Racine des clones d'ancrage : surchargeable par variable d'environnement,
+# avec une valeur par defaut derivee du HOME (jamais un chemin absolu en dur).
+ANCHOR_ROOT = os.environ.get("PJ_ANCHOR_ROOT") or str(Path.home() / "pj-repos")
 IMPORT_RE = re.compile(r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/(\d+)")
 
 
@@ -247,7 +249,7 @@ def build_plan(doc: dict, t5_id: str, board: str, root_id: str) -> dict:
                            f"(1) le code livré respecte l'objectif de l'issue ; (2) le vault "
                            f"docs/ est cohérent avec le code (composants, ADR, features) ; "
                            f"(3) aucune note orpheline ni lien mort. Preuve : "
-                           f"`python3 <hermes-workflow>/pipeline/pj_docs_lint.py {anchor}` doit sortir "
+                           f"`python3 ~/.hermes/scripts/pj_docs_lint.py {anchor}` doit sortir "
                            f"exit 0. Poster le verdict en commentaire ; en cas d'écart, "
                            f"`kanban_block` avec la liste précise.")})
     cards.append({"key": "doc-memory", "title": f"doc-memory #{issue}",
@@ -256,7 +258,7 @@ def build_plan(doc: dict, t5_id: str, board: str, root_id: str) -> dict:
                   "body": (f"POST-MERGE (après worktree-rm). Alimenter Hindsight (banque pj, "
                            f"tags project:{repo}, doc:<path>, issue:{issue}) avec les notes du "
                            f"vault docs/ :\n"
-                           f"`python3 <hermes-workflow>/pipeline/pj_docs_memory.py --repo {anchor} "
+                           f"`~/.hermes/scripts/pj_docs_memory.py --repo {anchor} "
                            f"--issue {issue}`\n"
                            f"Poster le compte d'envois (envoyés/inchangés/échecs) en commentaire.")})
 
