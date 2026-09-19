@@ -162,9 +162,15 @@ def slices_of(ledger):
 
 
 def files_of(record):
-    """Normalise les fichiers d'une slice : liste de chemins ou mapping chemin -> chiffres."""
+    """Normalise les fichiers d'une slice : liste de chemins ou mapping chemin -> chiffres.
+
+    Un mapping VIDE est légitime : une slice `kind: create` (la planche, l'outil de scan)
+    ne traduit rien, donc elle ne déclare aucun fichier du corpus. C'est aux slices de
+    traduction d'être non vides, et c'est `test_nominal_planche_registre_…` qui l'exige en
+    comparant à la liste gelée de la spec — pas cette normalisation.
+    """
     f = record.get("files")
-    assert f, "entrée de slice sans `files`"
+    assert f is not None, "entrée de slice sans clé `files` (une slice sans fichiers doit porter {})"
     return list(f) if isinstance(f, (list, tuple)) else list(f.keys())
 
 
@@ -384,11 +390,15 @@ def test_nominal_la_planche_et_le_script_mesures_sont_ceux_du_commit(clone_base)
 def test_limite_un_document_change_de_taille_apres_redaction_de_la_planche(clone):
     """Scénario limite : l'écart est nommé fichier par fichier et le test échoue."""
     cible = clone["dir"] / "skills/kanban-gate/SKILL.md"
+    avant_l, avant_a = stats(clone["dir"], "skills/kanban-gate/SKILL.md")
     avant = sha256(cible)
     with cible.open("a", encoding="utf-8") as fh:
-        fh.write("\nUne ligne ajoutée par le banc de test (mutation).\n")
+        fh.write("\nUne ligne accentuée ajoutée par le banc (mutation).\n")
     apres = sha256(cible)
     assert avant != apres, "mutation NON appliquée (témoin de hash) : %s" % avant
+    # les deux nombres attendus sont MESURÉS après mutation, jamais recopiés
+    apres_l, apres_a = stats(clone["dir"], "skills/kanban-gate/SKILL.md")
+    assert (apres_l, apres_a) != (avant_l, avant_a), "la mutation n'a rien changé de mesurable"
 
     p = measure(clone["dir"], clone["plate"], clone["script"])
     sortie = p.stdout + p.stderr
@@ -401,9 +411,15 @@ def test_limite_un_document_change_de_taille_apres_redaction_de_la_planche(clone
         "l'écart doit être nommé fichier par fichier : aucun message ne cite "
         "skills/kanban-gate/SKILL.md\n%s" % sortie
     )
-    assert any(re.search(r"\b46\b", l) and re.search(r"\b47\b", l) for l in lignes), (
-        "la ligne d'écart doit porter les deux nombres (attendu 46 / mesuré 47) : %r"
-        % lignes
+    assert any(re.search(r"\b%d\b" % avant_l, l) and re.search(r"\b%d\b" % apres_l, l)
+               for l in lignes), (
+        "la ligne d'écart doit porter les DEUX nombres (attendu %d / mesuré %d) : %r"
+        % (avant_l, apres_l, lignes)
+    )
+    assert any("skills/kanban-gate/SKILL.md" in l and re.search(r"\b%d\b" % apres_a, l)
+               for l in lignes), (
+        "la ligne d'écart doit aussi porter les lignes accentuées (attendu %d / mesuré %d) : %r"
+        % (avant_a, apres_a, lignes)
     )
 
 
