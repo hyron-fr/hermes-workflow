@@ -1,0 +1,299 @@
+/* Hermes Workflow — dashboard plugin styles.
+ * Uses theme variables only (no hardcoded colors) per the plugin SDK rules.
+ */
+
+.wf-main {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.wf-graph-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wf-graph-wrap {
+  position: relative;
+  overflow: auto;
+  border: 1px solid var(--ui-stroke-secondary, #333);
+  border-radius: 8px;
+  background: var(--ui-background, transparent);
+  min-height: 320px;
+}
+
+.wf-svg {
+  display: block;
+  width: 100%;
+}
+
+.wf-start {
+  position: absolute;
+  font-size: 11px;
+  color: var(--ui-text-secondary, #888);
+  text-align: center;
+  width: 60px;
+}
+
+.wf-node {
+  position: absolute;
+  border: 1px solid var(--ui-stroke-secondary, #444);
+  border-radius: 6px;
+  background: var(--ui-background, #1a1a1a);
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: border-color 0.12s ease;
+}
+
+.wf-node:hover {
+  border-color: var(--ui-accent, #4f8cff);
+}
+
+.wf-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--ui-stroke-secondary, #333);
+}
+
+.wf-node-id {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--ui-text-primary, #eee);
+}
+
+.wf-node-type {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--ui-stroke-secondary, #333);
+  color: var(--ui-text-secondary, #aaa);
+}
+
+.wf-collapse {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--ui-text-secondary, #aaa);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.wf-node-agents {
+  padding: 4px 8px;
+}
+
+.wf-agent {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 2px 0;
+  color: var(--ui-text-secondary, #bbb);
+}
+
+.wf-agent-backend {
+  color: var(--ui-text-quaternary, #777);
+  font-size: 10px;
+}
+
+.wf-gate-ports {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px;
+}
+
+.wf-port {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.wf-port-pass {
+  color: #10b981;
+}
+
+.wf-port-fail {
+  color: #ef4444;
+}
+
+/* Property panel */
+.wf-panel {
+  flex: 0 0 280px;
+  border: 1px solid var(--ui-stroke-secondary, #333);
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.wf-panel-empty {
+  color: var(--ui-text-secondary, #888);
+}
+
+.wf-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 10px;
+  color: var(--ui-text-primary, #eee);
+}
+
+.wf-field {
+  margin-bottom: 10px;
+}
+
+.wf-textarea {
+  width: 100%;
+  min-height: 60px;
+  font-family: monospace;
+  font-size: 11px;
+  padding: 6px;
+  border: 1px solid var(--ui-stroke-secondary, #333);
+  border-radius: 4px;
+  background: var(--ui-background, #1a1a1a);
+  color: var(--ui-text-primary, #eee);
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+/* YAML editor */
+.wf-yaml-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wf-yaml-status {
+  font-size: 12px;
+}
+
+.wf-status-ok {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.wf-status-err {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.wf-yaml-editor {
+  width: 100%;
+  min-height: 60vh;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 12px;
+  border: 1px solid var(--ui-stroke-secondary, #333);
+  border-radius: 6px;
+  background: var(--ui-background, #1a1a1a);
+  color: var(--ui-text-primary, #eee);
+  box-sizing: border-box;
+  resize: vertical;
+  white-space: pre;
+}
+
+.wf-errors {
+  border: 1px solid #ef4444;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.wf-error {
+  font-size: 12px;
+  color: #ef4444;
+  padding: 2px 0;
+}
+
+/* Onboarding */
+.wf-onboard-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.wf-onboard-card {
+  background: var(--ui-background, #1a1a1a);
+  border: 1px solid var(--ui-stroke-secondary, #333);
+  border-radius: 10px;
+  padding: 24px;
+  max-width: 420px;
+  width: 90%;
+}
+
+.wf-onboard-dots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.wf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ui-stroke-secondary, #444);
+}
+
+.wf-dot-active {
+  background: var(--ui-accent, #4f8cff);
+}
+
+.wf-onboard-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--ui-text-primary, #eee);
+}
+
+.wf-onboard-body {
+  font-size: 13px;
+  color: var(--ui-text-secondary, #bbb);
+  margin-bottom: 20px;
+  line-height: 1.5;
+}
+
+.wf-onboard-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Review diff */
+.wf-review-dialog {
+  max-width: 640px;
+}
+
+.wf-diff {
+  max-height: 50vh;
+  overflow: auto;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  border: 1px solid var(--ui-stroke-secondary, #333);
+  border-radius: 6px;
+  padding: 8px;
+  white-space: pre-wrap;
+}
+
+.wf-diff-add {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.wf-diff-del {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.wf-diff-same {
+  color: var(--ui-text-secondary, #888);
+}
+
+.wf-btn-active {
+  border-color: var(--ui-accent, #4f8cff);
+  color: var(--ui-accent, #4f8cff);
+}

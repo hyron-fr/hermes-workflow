@@ -1,0 +1,14 @@
+{
+  "name": "workflow",
+  "label": "Workflow",
+  "description": "Visualize, edit and review the pipeline workflows (workflows/*.yaml) as a Step Functions-style graph.",
+  "icon": "Workflow",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/workflow",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

@@ -1,0 +1,13 @@
+{
+  "name": "gh-kanban-bridge",
+  "label": "GH↔Kanban Bridge",
+  "description": "Configure and drive the GitHub↔Kanban bridge — config, live state, and actions.",
+  "icon": "Settings",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/gh-kanban-bridge",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

@@ -1,0 +1,7 @@
+name: gh-kanban-bridge
+description: >-
+  Dashboard UI to configure and drive the GitHub↔Kanban bridge (config, live
+  state, actions). Extends the web dashboard only; see dashboard/.
+version: 1.0.0
+author: hyron-fr
+kind: standalone

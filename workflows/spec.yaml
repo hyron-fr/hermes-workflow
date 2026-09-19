@@ -1,0 +1,103 @@
+# Workflow spec — revue de spec multi-agents + découpage sous-tickets.
+# Premier cas d'usage de validation du moteur de pipeline YAML.
+#
+# Chaque étape agentique émet un JSON validé contre un schéma (structured
+# output). Le gate déterministe décide de l'itération (goto revalidate) ou
+# de la sortie (goto finalize).
+
+name: spec
+description: Revue de spec multi-agents + découpage sous-tickets
+on:
+  ticket:
+    status: [new, triaged]
+
+orchestration:
+  mode: structured_output
+  gate: all_validated
+  max_iterations: 10
+
+# Smileys + libellés de statut du thread Discord (lus par le moteur).
+status:
+  running: "⚙️ running"
+  done: "✅ done"
+  fail: "❌ fail"
+  retry: "🔁 retry"
+
+steps:
+  # Étape 1 — Agents point de vue (parallèle).
+  - id: viewpoints
+    type: agentic
+    parallel: true
+    prompt: |
+      Tu es un expert {{role}} qui relit une spec de ticket.
+      Ticket : {{ticket.title}}
+      Spec : {{ticket.body}}
+      Donne ton point de vue structuré (JSON) : role, summary, concerns (liste),
+      suggestions (liste).
+    agents:
+      - { role: ddd,        backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+      - { role: tdd,        backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+      - { role: hexagonal,  backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+      - { role: functional, backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+    output: { kind: structured, schema: ./schemas/viewpoint.json }
+
+  # Étape 2 — Consolidation + découpage sous-tickets.
+  - id: consolidate
+    type: agentic
+    prompt: |
+      Tu es consolidateur. À partir des points de vue ci-dessous, produis une
+      spec consolidée et un découpage en sous-tickets (JSON : spec, subtasks[]).
+      Points de vue : {{steps.viewpoints}}
+    agent: { role: consolidator, backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+    input: [viewpoints]
+    output: { kind: structured, schema: ./schemas/consolidation.json }
+    side_effect: create_subtickets
+
+  # Étape 3 — Check template déterministe.
+  - id: template_check
+    type: deterministic
+    command: |
+      test -f ./templates/ticket.md && echo "template présent" || echo "TEMPLATE MANQUANT"
+    template: ./templates/ticket.md
+    on_fail: consolidate
+
+  # Étape 4 — Re-validation par les agents (prisme validation).
+  - id: revalidate
+    type: agentic
+    parallel: true
+    prompt: |
+      Tu es un expert {{role}}. Re-valide la spec consolidée ci-dessous contre
+      ton point de vue initial. Réponds en JSON : role, status (ok|ko), feedback.
+      Spec consolidée : {{steps.consolidate}}
+    agents:
+      - { role: ddd,        backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+      - { role: tdd,        backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+      - { role: hexagonal,  backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+      - { role: functional, backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+    input: [consolidate, template_check]
+    output: { kind: structured, schema: ./schemas/validation.json }
+
+  # Étape 5 — Revue de cohérence globale.
+  - id: coherence
+    type: agentic
+    prompt: |
+      Tu es réviseur de cohérence. Relis les validations ci-dessous et donne un
+      verdict global (JSON : status ok|ko, verdict).
+      Validations : {{steps.revalidate}}
+    agent: { role: coherence, backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+    input: [revalidate]
+    output: { kind: structured, schema: ./schemas/coherence.json }
+
+  # Étape 6 — Gate : tout validé ?
+  - id: gate
+    type: gate
+    check: "all(r.get('data', {}).get('status') == 'ok' for r in revalidate.get('results', [])) and coherence.get('data', {}).get('status') == 'ok'"
+    on_fail: revalidate
+    on_pass: finalize
+
+  # Étape 7 — Update kanban + sous-tickets + GitHub + Discord.
+  - id: finalize
+    type: deterministic
+    actions:
+      - hermes kanban --board {{board}} comment {{ticket.id}} "Spec validée par le pipeline spec (multi-agents + gate)."
+      - gh issue edit {{ticket.issue_number}} --repo hyron-fr/hermes-experiment --body "Spec validée (pipeline spec)."

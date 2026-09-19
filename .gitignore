@@ -1,0 +1,36 @@
+# Secrets — ne jamais versionner
+.env
+*.env
+!.env.example
+*_secret*
+*credentials*
+
+# Configs locales (contiennent des clés) — seuls les .example sont versionnés
+config.yaml
+!config.yaml.example
+
+# Hermes : état local, jamais versionné
+state.db*
+sessions/
+logs/
+cache/
+hook_outputs/
+audio_cache/
+image_cache/
+backups/
+plans/
+gateway*
+*.pid
+*.lock
+*.sock
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Divers
+.DS_Store
+*.log

@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "consolidation",
+  "type": "object",
+  "required": ["spec", "subtasks"],
+  "properties": {
+    "spec": {
+      "description": "Spec consolidée : soit une chaîne simple, soit un objet riche (titre, objectif, architecture, critères d'acceptation...).",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object" }
+      ]
+    },
+    "subtasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": ["title", "body"],
+            "properties": {
+              "title": { "type": "string" },
+              "body": { "type": "string" }
+            }
+          },
+          {
+            "required": ["titre", "description"],
+            "properties": {
+              "titre": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "phase": { "type": "integer" },
+          "livrables_tests": { "type": "string" },
+          "depends_on": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

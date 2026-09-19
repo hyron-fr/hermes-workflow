@@ -1,0 +1,39 @@
+# Workflow de test minimal — valide le chemin agentique réel (dsh) + schéma
+# + persistance d'état, sans écrire sur le board ni GitHub.
+name: smoke
+description: smoke test du moteur (1 étape agentique dsh + 1 déterministe + gate)
+orchestration:
+  mode: structured_output
+  max_iterations: 3
+
+# Smileys + libellés de statut du thread Discord (lus par le moteur).
+status:
+  running: "⚙️ running"
+  done: "✅ done"
+  fail: "❌ fail"
+  retry: "🔁 retry"
+
+steps:
+  - id: viewpoint
+    type: agentic
+    prompt: |
+      Tu es un expert ddd. Relis ce ticket et réponds UNIQUEMENT en JSON avec
+      les champs role, summary, concerns (liste), suggestions (liste).
+      Ticket : {{ticket.title}}
+    agents:
+      - { role: ddd, backend: dsh, profile: headless, model: muse-glimmer:nim }
+    output: { kind: structured, schema: ./schemas/viewpoint.json }
+
+  - id: echo
+    type: deterministic
+    command: echo "ok"
+
+  - id: gate
+    type: gate
+    check: "viewpoint.get('ok') == True"
+    on_pass: done
+    on_fail: viewpoint
+
+  - id: done
+    type: deterministic
+    command: echo "pipeline terminé"

@@ -1,0 +1,7 @@
+name: gh-triage-buttons
+description: >-
+  Boutons go/no-go déterministes pour le drill gh-triage. Route les clics
+  triage:go:<N> / triage:nogo:<N> vers la session du thread Discord.
+version: 1.0.0
+author: hyron-fr
+kind: standalone

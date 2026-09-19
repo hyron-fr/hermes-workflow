@@ -1,0 +1,6 @@
+name: pj-buttons
+version: 1.0.0
+description: Boutons décisionnels déterministes (go/nogo) pour le pipeline pj-master.
+kind: platform
+platforms: [discord]
+entry: __init__.py

@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "validation",
+  "type": "object",
+  "required": ["role", "status", "feedback"],
+  "properties": {
+    "role": { "type": "string" },
+    "status": { "type": "string", "enum": ["ok", "ko"] },
+    "feedback": { "type": "string" }
+  }
+}

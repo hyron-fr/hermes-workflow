@@ -1,0 +1,8 @@
+name: workflow
+description: >-
+  Dashboard UI to visualize, edit and review the pipeline workflows
+  (workflows/*.yaml) as a Step Functions-style graph. Extends the web
+  dashboard only; see dashboard/.
+version: 1.0.0
+author: hyron-fr
+kind: standalone
