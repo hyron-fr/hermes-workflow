@@ -267,7 +267,7 @@ def rendre_propre_au_scan(root):
     Returns ({rel: (sha256_before, sha256_after)}, [(rel, token)]).
     """
     machine = {}
-    for rel, num, tok, _ in litteraux_machine(root):
+    for rel, num, span, tok, _ in litteraux_machine(root):
         machine.setdefault(rel, set()).add(tok)
     hashes, remplaces = {}, []
     for rel in SLICE_FILES:
@@ -466,7 +466,7 @@ def non_attribuables(root):
     nothing can explain them away. This is the set that must be empty.
     """
     lits = declared_literals()[0]
-    machine = {(rel, num) for rel, num, _, _ in litteraux_machine(root)}
+    machine = {(rel, num) for rel, num, _, _, _ in litteraux_machine(root)}
     out = []
     for rel in SLICE_FILES:
         for num, ligne in enumerate(lines_of(root, rel), 1):
@@ -647,7 +647,7 @@ def _etat_traduit():
         total += len(accented_lines(lines_of(REPO, rel)))
 
     machine = litteraux_machine(REPO)
-    for rel, num, tok, em in machine:
+    for rel, num, span, tok, em in machine:
         print("witness littéral machine (arbitrage conv-6) : %s:%d %r porté par %r"
               % (rel, num, tok, em[:3]))
 
