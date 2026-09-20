@@ -359,6 +359,43 @@ def _resolve_bin(name: str, *candidates: str) -> str:
 GH_BIN = _resolve_bin("gh", "~/.local/bin/gh", "~/.hermes/bin/gh")
 
 
+# --------------------------------------------------------------------------- garde ---
+# États que `gh issue view --json state -q .state` peut rendre et qui sont DÉCIDABLES.
+OPEN_STATE = "OPEN"
+CLOSED_STATE = "CLOSED"
+READABLE_STATES = (OPEN_STATE, CLOSED_STATE)
+
+# TROIS chemins de doute (gh introuvable, rc != 0, exception) PLUS la sortie illisible :
+# QUATRE avertissements DISTINCTS, un par chemin. `_warn_once` déduplique par message —
+# réutiliser la même chaîne rendrait le deuxième chemin muet, et c'est précisément le
+# défaut corrigé ici (mesuré sur la copie de production : `_warn_once` n'avait qu'UN seul
+# appel, dans la branche `if not GH_BIN`, donc `rc != 0` et l'exception étaient muets).
+WARN_GH_ABSENT = ("gh introuvable (PATH + candidats) — garde-fou d'état d'issue "
+                  "INDISPONIBLE, escalade inchangée")
+WARN_GH_RC = ("état d'issue illisible : gh issue view rc={rc} — état "
+              "INDÉTERMINÉ, escalade inchangée")
+WARN_GH_EXC = ("état d'issue illisible : gh issue view a levé {exc} — état "
+               "INDÉTERMINÉ, escalade inchangée")
+WARN_GH_UNREADABLE = ("état d'issue illisible : sortie {state!r} (ni OPEN ni CLOSED) — "
+                      "état INDÉTERMINÉ, escalade inchangée")
+
+
+def escalation_allowed(state: str) -> bool:
+    """Décision PURE : l'état du ticket laisse-t-il partir l'escalade ?
+
+    OPEN → `True`, `CLOSED` → `False`, **chaîne vide ou état inconnu → `True`** (un doute
+    escalade : la garde ne doit jamais rendre une carte muette *par erreur*). Comparaison
+    insensible à la casse et aux blancs de bord.
+
+    Aucune entrée-sortie : ni réseau, ni sous-processus, ni système de fichiers — et
+    **muette à dessein**. C'est ce qui rend la décision testable directement ; le chemin
+    réseau vit dans `issue_is_closed`, qui l'appelle. L'avertissement de l'état
+    INDÉTERMINÉ est émis par cette garde (l'appelante), seule à pouvoir nommer l'entité
+    concernée — jamais par la décision elle-même.
+    """
+    return str(state or "").strip().upper() != CLOSED_STATE
+
+
 def issue_is_closed(cfg: EscalationConfig, repo: str, issue: int, *,
                     runner=subprocess.run) -> bool:
     """True si le ticket est FERMÉ sur GitHub — la carte ne doit plus escalader.
@@ -371,10 +408,16 @@ def issue_is_closed(cfg: EscalationConfig, repo: str, issue: int, *,
     terminé. Un ticket clos n'attend plus de décision : toute carte qui s'en
     réclame est soit orpheline, soit mal rattachée, et l'arbitrage appartient à
     l'orchestrateur (pj-master), pas à l'humain.
+
+    TRI-ÉTAT rendu explicite : `OPEN` et `CLOSED` sont **muets** (l'un escalade, l'autre
+    saute la carte comme traitée). Les chemins de doute — `gh` introuvable, `rc != 0`,
+    exception du binaire, **sortie illisible** — avertissent **chacun nommément** sur la
+    sortie standard et retournent `False` : on escalade, jamais muet par erreur. Une
+    exception **ne se propage pas** (elle ferait tomber le tick entier, donc toutes les
+    cartes suivantes).
     """
     if not cfg.gh_bin:
-        _warn_once("gh introuvable (PATH + candidats) — garde-fou d'état d'issue "
-                   "INDISPONIBLE, escalade inchangée")
+        _warn_once(WARN_GH_ABSENT)                # doute n° 1 — binaire indisponible
         return False
     try:
         r = runner(
@@ -382,18 +425,34 @@ def issue_is_closed(cfg: EscalationConfig, repo: str, issue: int, *,
              "--json", "state", "-q", ".state"],
             capture_output=True, text=True, timeout=30,
         )
-        if r.returncode != 0:
-            return False          # doute -> on escalade (jamais muet par erreur)
-        return r.stdout.strip().upper() == "CLOSED"
-    except Exception:
+        rc, out = r.returncode, r.stdout
+    except Exception as exc:                      # doute n° 2 — binaire non exécutable
+        # Lecture du résultat DANS le `try` : un `runner` qui lève, qui rend un objet
+        # inexploitable (`AttributeError` sur `returncode`) ou qui dépasse son délai
+        # (`TimeoutExpired`) est un doute, pas une panne du tick — l'exception ne se
+        # propage JAMAIS, sinon les cartes suivantes du même tick tombent avec elle.
+        _warn_once(WARN_GH_EXC.format(exc=type(exc).__name__))
         return False
+    if rc != 0:                                   # doute n° 3 — lecture refusée
+        _warn_once(WARN_GH_RC.format(rc=rc))
+        return False
+    state = (out or "").strip().upper()
+    if state not in READABLE_STATES:              # doute n° 4 — sortie illisible
+        _warn_once(WARN_GH_UNREADABLE.format(state=state))
+        return False
+    return not escalation_allowed(state)
 
 
 _WARNED: set[str] = set()
 
 
 def _warn_once(msg: str) -> None:
-    """Un avertissement par tick : une garde inerte doit être VISIBLE, jamais muette."""
+    """Un avertissement par message et par tick : une garde inerte est VISIBLE, jamais muette.
+
+    Dédup par **message** (set process-local, et le cron lance un process neuf à chaque
+    tick). Conséquence pour les appelants : deux chemins de doute DIFFÉRENTS doivent
+    passer deux chaînes DIFFÉRENTES, sinon le second est avalé — voir `WARN_GH_*`.
+    """
     if msg in _WARNED:
         return
     _WARNED.add(msg)

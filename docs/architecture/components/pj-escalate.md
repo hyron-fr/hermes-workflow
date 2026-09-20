@@ -86,6 +86,32 @@ Sans suffixe de repo (le tick est global, contrairement aux wrappers
 `pj_bridge_*` / `pj_graphwatch_*` / `pj_room_keeper_*`) — il ne pose donc **pas**
 `PJ_BOARD` (le poser restreindrait le tick global à un seul board, en silence).
 
+## Chemins de doute — trois chemins, trois avertissements
+
+La garde d'état d'issue lit `gh issue view --json state` et décide, via la fonction
+**pure** `escalation_allowed(state)` : `OPEN` → escalade, `CLOSED` → la carte est
+marquée traitée sans post, **chaîne vide ou état inconnu → escalade quand même**
+(un doute ne rend jamais une carte muette *par erreur*).
+
+| chemin de doute | retour | avertissement |
+|---|---|---|
+| `gh` introuvable (`GH_BIN` vide) | `False` — on escalade | `gh introuvable … INDISPONIBLE` |
+| retour non nul (`rc != 0`) | `False` — on escalade | `gh issue view rc=<n> … INDÉTERMINÉ` |
+| exception du sous-processus | `False` — on escalade | `gh issue view a levé <Type> … INDÉTERMINÉ` |
+| sortie illisible (ni `OPEN` ni `CLOSED`) | `False` — on escalade | `sortie '<x>' (ni OPEN ni CLOSED) … INDÉTERMINÉ` |
+
+Règle « **trois chemins de doute, trois avertissements** » : les avertissements portent
+des messages **distincts** parce que `_warn_once` déduplique **par message**. Réutiliser
+la même chaîne rendrait muet le deuxième chemin du même tick — c'est exactement le défaut
+d'origine (un unique appel de `_warn_once`, dans la branche `if not GH_BIN`). La dédup ne
+joue donc qu'entre messages **identiques**, et deux chemins différents dans un même tick
+produisent bien deux lignes. Les états **décidables** (`OPEN`, `CLOSED`) restent muets :
+le nominal est bruyant uniquement quand il y a un doute.
+
+Une exception ne **se propage jamais** : elle ferait tomber le tick entier, donc toutes
+les cartes suivantes. Puits de l'avertissement : `print` → stdout → le fichier de sortie
+du job de cron (`cron/output/<job_id>/*.md`).
+
 ## Points d'injection
 
 Les entrées-sorties (kanban SQLite, `gh`, Discord, fichiers d'état) passent par
