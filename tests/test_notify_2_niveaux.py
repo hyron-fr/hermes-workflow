@@ -177,6 +177,26 @@ def _decision(task=TASK_A, effect="unblock"):
             "note": f"décision /ok : débloquer la carte", "acted": effect != "ignore"}
 
 
+def _ancre_du_parent(fx):
+    """L'ANCRE réellement écrite sur le parent — lue dans la VALEUR passée à l'effet.
+
+    Le banc ne lit jamais le texte du module : juger `_anchor` sur son source ne
+    dirait rien de ce que le parent reçoit, et c'est exactement le trou qui a
+    laissé survivre le mutant « l'URL fournie est ignorée ». On prend la dernière
+    ligne du corps du parent, là où le contrat place le point de statuer.
+    """
+    corps = fx.corps("comment", PARENT)
+    assert corps, "aucune notification d'avancement sur le parent"
+    lignes = [l for l in corps[0].splitlines() if l.strip()]
+    assert lignes, "corps du parent vide"
+    return lignes[-1].split(":", 1)[1].strip() if ":" in lignes[-1] else lignes[-1].strip()
+
+
+def _url_du_commentaire(cid, issue=ENFANT_A):
+    """URL de commentaire GitHub identifiant l'issue ET le commentaire (forme réelle)."""
+    return f"https://github.com/hyron-fr/hermes-workflow/issues/{issue}#issuecomment-{cid}"
+
+
 # ==========================================================================
 # 0. Le module versionné existe — l'échec le plus net (le mur mesuré)
 # ==========================================================================
@@ -380,6 +400,98 @@ def test_limite_ancre_du_ok_conservee_sans_url_fournie(nt):
     assert "912" in corps, (
         f"l'ancre doit rester identifiable (id du commentaire) : {corps[:300]}"
     )
+
+
+# ==========================================================================
+# B2. L'AXE ANCRE — l'URL FOURNIE est discriminée du repli (ferme M5)
+# ==========================================================================
+def test_nominal_l_ancre_ecrite_est_l_url_fournie_caractere_pour_caractere(nt):
+    """NOMINAL — l'URL fournie par l'appelant est L'ANCRE écrite sur le parent.
+
+    Discriminant mesuré : le repli `issues/40#issuecomment-900` et l'URL fournie
+    ne sont pas la même chaîne. Une implémentation qui ignore `comment['url']` et
+    sert toujours le repli rend donc un corps FAUX ici — c'est le cas qui tue le
+    mutant `M5_ancre_url_ignoree`.
+    """
+    url = _url_du_commentaire(900)
+    ctx = _ctx(cid=900)
+    ctx["decision_comment"]["url"] = url        # l'appelant FOURNIT l'URL
+    fx = _Fx()
+    r = nt.notify_decision(_decision(), ctx, fx.as_dict())
+    assert r["parent_notified"] is True, r
+    ancre = _ancre_du_parent(fx)
+    assert ancre == url, (
+        f"le parent doit porter l'URL FOURNIE, caractère pour caractère.\n"
+        f"  attendu : {url!r}\n  mesuré  : {ancre!r}"
+    )
+    assert ancre != f"issues/{ENFANT_A}#issuecomment-900", (
+        "repli servi alors que l'appelant a fourni son URL"
+    )
+
+
+def test_limite_l_ancre_suit_le_commentaire_courant_et_ignore_un_repli_voisin(nt):
+    """LIMITE — l'ancre est celle du commentaire COURANT, pas un repli plausible.
+
+    Deux formes différentes, mesurées sur le MÊME code : une URL fournie et le
+    repli. Chacune doit apparaître pour ce qu'elle est. C'est ce qui distingue
+    « l'ancre suit le commentaire » de « l'ancre est fabriquée ».
+    """
+    url = _url_du_commentaire(903)
+    ctx_url = _ctx(cid=903)
+    ctx_url["decision_comment"]["url"] = url
+    fx_url = _Fx()
+    nt.notify_decision(_decision(), ctx_url, fx_url.as_dict())
+
+    ctx_repli = _ctx(cid=904)
+    ctx_repli["decision_comment"].pop("url")     # appelant sans URL
+    fx_repli = _Fx()
+    nt.notify_decision(_decision(), ctx_repli, fx_repli.as_dict())
+
+    assert _ancre_du_parent(fx_url) == url, (
+        f"avec URL fournie, l'ancre est l'URL : {_ancre_du_parent(fx_url)!r}"
+    )
+    assert _ancre_du_parent(fx_repli) == f"issues/{ENFANT_A}#issuecomment-904", (
+        f"sans URL, le repli identifie le commentaire : {_ancre_du_parent(fx_repli)!r}"
+    )
+    assert _ancre_du_parent(fx_url) != _ancre_du_parent(fx_repli), (
+        "les deux formes ne peuvent pas être rendues identiques"
+    )
+
+
+def test_erreur_ancre_etrangere_ecrite_telle_quelle_le_champ_est_juge(nt):
+    """ERREUR — l'ancre du parent EST le champ `url` de l'appelant, sans censure.
+
+    Le contrat de `_anchor` est « l'URL du commentaire /ok passée par l'appelant,
+    sinon le repli ». Un `url` désignant un AUTRE ticket que le parent du contexte
+    est donc écrit **tel quel, caractère pour caractère** : le module n'est pas le
+    lieu de la validation de provenance (elle appartient à l'appelant, qui lit
+    GitHub), et une implémentation qui censurerait ou normaliserait ici trahirait
+    le contrat en rendant l'ancre inexploitable.
+
+    Le cas est jugé par la VALEUR ÉCRITE, jamais par la lecture du texte source :
+    le discriminant est que le ticket étranger apparaît comme l'ancre du parent,
+    et nulle part ailleurs — les seuls fils écrits restent ceux du contexte.
+    """
+    etrangere = _url_du_commentaire(900, issue=999)
+    assert f"issues/{PARENT}" not in etrangere, \
+        "témoin : l'URL fournie désigne 999, pas le parent du contexte"
+    ctx = _ctx(cid=900)
+    ctx["decision_comment"]["url"] = etrangere
+    fx = _Fx()
+    r = nt.notify_decision(_decision(), ctx, fx.as_dict())
+    assert r["parent_notified"] is True, r
+    ancre = _ancre_du_parent(fx)
+    assert ancre == etrangere, (
+        f"l'ancre écrite est la valeur fournie, non censurée :\n"
+        f"  attendu : {etrangere!r}\n  mesuré  : {ancre!r}"
+    )
+    assert "issues/999" in ancre, "le ticket désigné par l'appelant est bien écrit"
+    assert fx.issues_touchees() == {ENFANT_A, PARENT}, (
+        f"seuls les fils du contexte sont écrits : {sorted(fx.issues_touchees())}"
+    )
+    assert "issues/999" not in " ".join(
+        b for k, i, b in fx.appels if i == ENFANT_A
+    ), "le ticket étranger n'apparaît que dans le corps du parent, jamais ailleurs"
 
 
 # ==========================================================================
