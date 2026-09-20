@@ -27,4 +27,5 @@ _(peuplé par la carte `doc-k` : chaque ADR sous `decisions/` doit être référ
 - [[pj-bridge-coverage-gate]] — Gate de couverture du pont (issue #5, slice 2 + 2b) : exemption du parent par soustraction, label `decision`, ancre des graphes, trappe `pj-import` assurée avant d'être proposée.
 - [[pj-bridge-push-ancre]] — Ancre de `issue_number_of()` (issue #5, slice 3) : la carte `done` ferme l'issue de sa ligne de protocole `Importé depuis <url>`, jamais une autre citée dans le corps.
 - [[pj-notify]] — Émetteur des DEUX notifications d'une décision `/ok` (issue #5, slice 5) : l'enfant notifiée puis fermée, le parent notifié jamais fermé ; dédup par décision (jamais par horloge), non-blocant et jamais silencieux.
-- [[pj-escalate]] — Escalade déterministe des cartes bloquées vers Discord (contrat de variables d'environnement requises/optionnelles, règle « requise absente = refus bruyant »).
+- [[pj-escalate]] — Escalade déterministe des cartes bloquées vers Discord (contrat de variables d'environnement requises/optionnelles, règle « requise absente = refus bruyant », garde d'état d'issue : quatre chemins de doute, quatre avertissements distincts).
+

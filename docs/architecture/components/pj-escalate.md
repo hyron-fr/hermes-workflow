@@ -86,7 +86,7 @@ Sans suffixe de repo (le tick est global, contrairement aux wrappers
 `pj_bridge_*` / `pj_graphwatch_*` / `pj_room_keeper_*`) — il ne pose donc **pas**
 `PJ_BOARD` (le poser restreindrait le tick global à un seul board, en silence).
 
-## Chemins de doute — trois chemins, trois avertissements
+## Chemins de doute — quatre chemins, quatre avertissements
 
 La garde d'état d'issue lit `gh issue view --json state` et décide, via la fonction
 **pure** `escalation_allowed(state)` : `OPEN` → escalade, `CLOSED` → la carte est
@@ -100,7 +100,7 @@ marquée traitée sans post, **chaîne vide ou état inconnu → escalade quand 
 | exception du sous-processus | `False` — on escalade | `gh issue view a levé <Type> … INDÉTERMINÉ` |
 | sortie illisible (ni `OPEN` ni `CLOSED`) | `False` — on escalade | `sortie '<x>' (ni OPEN ni CLOSED) … INDÉTERMINÉ` |
 
-Règle « **trois chemins de doute, trois avertissements** » : les avertissements portent
+Règle « **quatre chemins de doute, quatre avertissements** » : les avertissements portent
 des messages **distincts** parce que `_warn_once` déduplique **par message**. Réutiliser
 la même chaîne rendrait muet le deuxième chemin du même tick — c'est exactement le défaut
 d'origine (un unique appel de `_warn_once`, dans la branche `if not GH_BIN`). La dédup ne
