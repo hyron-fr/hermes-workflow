@@ -363,6 +363,25 @@ def test_limite_le_parent_peut_etre_passe_comme_entier(nt):
     assert not r1["errors"] and not r2["errors"]
 
 
+def test_limite_ancre_du_ok_conservee_sans_url_fournie(nt):
+    """LIMITE — sans URL transmise, le parent pointe QUAND MÊME le commentaire /ok.
+
+    Le contrat est « renvoie au commentaire /ok (son ancre exacte) ». Le pont lit
+    aujourd'hui des dicts partiels : perdre l'ancre parce qu'un appelant n'a pas
+    transmis d'`url` rendrait la notification d'avancement inexploitable pour
+    l'humain, qui ne pourrait plus retrouver la décision qu'il a rendue.
+    """
+    ctx = _ctx(cid=912)
+    del ctx["decision_comment"]["url"]          # appelant sans URL
+    fx = _Fx()
+    r = nt.notify_decision(_decision(), ctx, fx.as_dict())
+    assert r["parent_notified"] is True
+    corps = fx.corps("comment", PARENT)[0]
+    assert "912" in corps, (
+        f"l'ancre doit rester identifiable (id du commentaire) : {corps[:300]}"
+    )
+
+
 # ==========================================================================
 # C. ERREUR — la décision acquise le reste, et l'échec n'est pas muet
 # ==========================================================================
@@ -415,6 +434,24 @@ def test_erreur_enfant_indisponible_l_echec_est_trace(nt):
     assert [e for e in r["errors"] if e["step"] == "child_notify"], r["errors"]
     assert r["traced"] is True
     assert r["child_notified"] is False
+
+
+def test_erreur_fermeture_de_l_enfant_refusee_est_tracee(nt):
+    """ERREUR — la FERMETURE de l'enfant échoue : l'échec est porté, pas avalé.
+
+    Chemin distinct de la notification : le fil peut accepter le commentaire et
+    refuser la fermeture (droits, état). Si seul `child_notify` était rapporté, cet
+    échec serait MUET — et l'enfant resterait ouvert sans que personne ne le sache.
+    Le parent est notifié quand même : la décision, elle, est bien acquise.
+    """
+    fx = _Fx(fail_close={ENFANT_A})
+    r = nt.notify_decision(_decision(), _ctx(), fx.as_dict())
+    assert r["child_notified"] is True, "la notification a réussi et doit rester acquise"
+    assert r["child_closed"] is False
+    err = [e for e in r["errors"] if e["step"] == "child_close"]
+    assert err and err[0]["issue"] == ENFANT_A, r["errors"]
+    assert r["traced"] is True, "jamais silencieux"
+    assert r["parent_notified"] is True, "un échec de fermeture n'empêche pas le suivi du ticket"
 
 
 def test_erreur_une_decision_qui_n_a_pas_debloque_n_emet_rien(nt):
