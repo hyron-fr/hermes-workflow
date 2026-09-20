@@ -19,3 +19,4 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 ## Composants
 
 - [[pj-decision]] — Core pur de décision `/ok` (issue #5, slice 4) : calcule la décision portée par un commentaire, ne l'applique jamais.
+- [[pj-bridge-coverage-gate]] — Gate de couverture du pont (issue #5, slice 2) : exemption du parent par soustraction, label `decision`, ancre des graphes, trappe honnête `pj-import`.
