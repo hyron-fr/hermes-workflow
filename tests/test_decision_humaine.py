@@ -22,7 +22,17 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-BRIDGE = REPO / "bridge" / "gh_kanban_bridge.py"
+
+# Quelle copie ce run valide-t-il ? Mesuré : `tests/test_bridge_coverage_gate.py`
+# existe en deux exemplaires homonymes (hermes-workflow et hermes-experiment) qui
+# ne diffèrent QUE par cette ligne — l'un importe `REPO/bridge`, l'autre
+# `/home/elix/hermes-experiment/bridge` (la copie que les wrappers EXÉCUTENT).
+# Un même fichier de test peut donc être vert sans que le pipeline soit réparé.
+# La variable PJ_BRIDGE_COPY permet de rejouer CE fichier contre la copie runtime :
+# la convergence #5 doit produire les deux runs, sinon « tests verts » n'est pas
+# « pont réparé ».
+BRIDGE = Path(os.environ["PJ_BRIDGE_COPY"]) if os.environ.get("PJ_BRIDGE_COPY") \
+    else REPO / "bridge" / "gh_kanban_bridge.py"
 
 # --------------------------------------------------------------------------
 # NOMS À CONFIRMER (une ligne chacun, cf. contrat-5)
