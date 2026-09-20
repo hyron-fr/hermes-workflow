@@ -19,6 +19,7 @@ Contrat de noms à confirmer (3 lignes, cf. `contrat-5`) : `DECISION_MODULE`, la
 """
 import importlib.util
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -280,3 +281,178 @@ def test_le_core_de_decision_reste_pur(dm, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", _boom)
     assert dm.decision_from_comment(_ctx_decision(), _c("/ok"))["effect"] == "unblock"
+
+
+# ==========================================================================
+# C. Durcissement du contrat (slice 4) — les cas ci-dessous ont été ajoutés
+#    APRÈS mesure par mutation : 4 mutants du module survivaient au banc
+#    (voir `red-4`), c'est-à-dire que le banc laissait passer une
+#    implémentation que le Gherkin interdit. Aucun cas existant n'a été
+#    retouché : ces cas ne font que fermer les faux verts mesurés.
+# ==========================================================================
+
+# Cartes d'un SECOND enfant du même ticket : elles ne doivent JAMAIS être
+# touchées par la décision de l'enfant A. Présentes dans le contexte pour
+# reproduire la production (l'appelant passe toutes les cartes lues), pas pour
+# être ciblées : c'est exactement la « résolution par le fil » que la slice
+# interdit.
+def _ctx_sans_carte_de_enfant(**kw):
+    """Ctx dont AUCUNE carte ne porte l'issue de l'enfant (fil non lié)."""
+    return _ctx_decision(cartes=[{"task_id": "t_zzz", "board": BOARD,
+                                  "status": "blocked", "issue": ENFANT_B}], **kw)
+
+
+def test_cible_jamais_une_carte_d_un_autre_enfant(dm):
+    """LIMITE — le ctx porte la carte d'un AUTRE enfant : aucune ne doit être visée.
+
+    C'est la règle centrale du design ratifié (cible = l'enfant), et c'était un
+    faux vert mesuré : viser `cards[0]` au lieu de filtrer sur l'issue de l'enfant
+    laissait le banc entièrement vert. `test_deux_enfants_en_parallele…` ne le
+    voyait pas parce que ses deux ctx ne portent qu'une carte chacun.
+    """
+    ctx = _ctx_decision(cartes=[
+        {"task_id": "t_aaa", "board": BOARD, "status": "blocked", "issue": ENFANT_A},
+        {"task_id": "t_bbb", "board": BOARD, "status": "blocked", "issue": ENFANT_B},
+    ])
+    d = dm.decision_from_comment(ctx, _c("/ok"))
+    assert d["task_id"] == "t_aaa", "la décision doit viser la carte de CET enfant"
+    assert d["task_id"] != "t_bbb", "jamais la carte d'un autre enfant (résolution par le fil)"
+
+    d2 = dm.decision_from_comment(_ctx_sans_carte_de_enfant(), _c("/ok"))
+    assert d2["effect"] == "comment", "aucune carte liée à l'enfant : rien à débloquer"
+    assert d2["task_id"] is None, "ne jamais débloquer une carte d'un autre enfant"
+
+
+def test_deux_cartes_bloquees_meme_enfant_ne_debloquent_rien(dm):
+    """ERREUR — 2 cartes liées à la MÊME enfant : cible indéterminée, aucun unblock.
+
+    Faux vert mesuré : retirer cette garde (débloquer la première) laissait le banc
+    vert. Le contrat « une enfant par carte » ne doit donc pas se dégrader
+    silencieusement en un choix arbitraire.
+    """
+    ctx = _ctx_decision(cartes=[
+        {"task_id": "t_aaa", "board": BOARD, "status": "blocked", "issue": ENFANT_A},
+        {"task_id": "t_ccc", "board": BOARD, "status": "blocked", "issue": ENFANT_A},
+    ])
+    d = dm.decision_from_comment(ctx, _c("/ok"))
+    assert d["effect"] == "comment", "cible indéterminée : jamais un unblock arbitraire"
+    assert d["task_id"] is None
+    assert d["note"], "l'humain doit être informé (jamais silencieux)"
+
+
+def test_la_decision_porte_acted_vrai_quand_elle_agit(dm):
+    """LIMITE — `acted` distingue « décision calculée » de « effet à porter ».
+
+    Faux vert mesuré : forcer `acted=False` sur le chemin nominal laissait le banc
+    vert. Seul `test_commentaire_deja_traite_non_rejoue` lisait ce champ ; il ne
+    contraint que le chemin `ignore`.
+    """
+    d = dm.decision_from_comment(_ctx_decision(), _c("/ok"))
+    assert d["effect"] == "unblock"
+    assert d["acted"] is True, "l'appelant doit pouvoir porter l'effet"
+
+    d2 = dm.decision_from_comment(_ctx_decision(), _c("juste une remarque"))
+    assert d2["effect"] == "ignore"
+    assert d2["acted"] is False, "un ignore ne porte aucun effet"
+
+
+def test_le_core_est_pur_a_l_execution(dm):
+    """ERREUR — la pureté est prouvée par EXÉCUTION, pas par lecture du texte.
+
+    `test_le_core_de_decision_reste_pur` lit des noms (`hasattr`) : il attrape les
+    `import x` littéraux et RIEN d'autre. Mesuré : un core appelant
+    `__import__("socket").gethostbyname(...)` — donc non pur, donc un RED
+    infalsifiable hors ligne — le laissait entièrement vert.
+
+    Ici la sentinelle est un MÉTA-CHEMIN D'IMPORT installé AVANT l'appel : toute
+    résolution (`__import__`, `importlib.import_module`, y compris en appel
+    littéral) et tout chargement de module passent par `sys.meta_path` ou
+    `builtins.__import__`, et sont donc consignés puis refusés. Le contrôle
+    négatif (`test_sentinelle_de_purete_rejette_l_impur`) prouve que la
+    sentinelle mord réellement.
+    """
+    journal = _purity_harness(lambda: dm.decision_from_comment(_ctx_decision(), _c("/ok")))
+    assert not journal, (
+        "le core a résolu un module d'effet pendant la décision : "
+        f"{sorted(set(journal))} — un core impur rend le RED infalsifiable"
+    )
+    assert journal.result["effect"] == "unblock"
+
+
+def test_sentinelle_de_purete_rejette_l_impur():
+    """CONTRÔLE NÉGATIF — la sentinelle doit mordre sur un core impur connu.
+
+    Sans ce cas, la sentinelle ci-dessus est un toujours-vert déguisé : elle
+    passerait aussi bien si elle ne détectait rien. On lui donne un sujet
+    franchement impur (résolution dynamique + lecture d'attribut) et on exige
+    qu'elle le nomme.
+    """
+    def impur():
+        return __import__("socket").gethostbyname("localhost")
+
+    journal = _purity_harness(impur)
+    assert journal, "la sentinelle n'a pas vu une résolution dynamique : elle ne prouve rien"
+    assert any("socket" in e for e in journal), journal
+
+
+class _Journal:
+    """Journal de pureté : les modules d'effet résolus pendant l'appel."""
+
+    def __init__(self):
+        self.entrees = []
+        self.result = {}
+        self.modules_charges = []
+
+    def __bool__(self):
+        return bool(self.entrees)
+
+    def __iter__(self):
+        return iter(self.entrees)
+
+
+def _purity_harness(fn):
+    """Exécute `fn` en consignant TOUTE résolution de module d'effet.
+
+    Trois surfaces couvertes, car aucune ne suffit seule :
+      - `sys.meta_path` (imports en instruction, résolution littérale) ;
+      - `builtins.__import__` (la fonction réellement appelée par `__import__`) ;
+      - un témoin `sys.modules` (un module déjà chargé et lu par attribut).
+    """
+    import builtins
+    import importlib.abc
+
+    racines = {"socket", "subprocess", "urllib", "requests", "sqlite3", "http", "os"}
+    journal = _Journal()
+
+    def consigne(name):
+        if str(name).split(".")[0] in racines:
+            journal.entrees.append(str(name))
+
+    class _Probe(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            consigne(fullname)
+            raise ImportError(f"core impur : import de {fullname} interdit")
+
+    probe = _Probe()
+    vrai_import = builtins.__import__
+
+    def garde(name, *a, **k):
+        consigne(name)
+        return vrai_import(name, *a, **k)
+
+    avant_modules = set(sys.modules)
+    sys.meta_path.insert(0, probe)
+    builtins.__import__ = garde
+    try:
+        journal.result = fn()
+    except AssertionError:
+        raise
+    except Exception as exc:  # un core impur échoue : c'est le signal recherché
+        journal.entrees.append(f"exception:{type(exc).__name__}")
+    finally:
+        sys.meta_path.remove(probe)
+        builtins.__import__ = vrai_import
+        journal.modules_charges = sorted(
+            m for m in set(sys.modules) - avant_modules if m.split(".")[0] in racines)
+    journal.entrees.extend(journal.modules_charges)
+    return journal
