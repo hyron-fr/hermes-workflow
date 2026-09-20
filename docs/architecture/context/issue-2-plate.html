@@ -22,6 +22,10 @@
   code { font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
           background:#f4f6f9; border:1px solid #e6eaf0; border-radius:3px; padding:1px 4px }
   .ba th { width:50% }
+  tr.tr td, tr.frozen td { font-size:12.5px }
+  tr.tr td:first-child { color:var(--ink) }
+  tr.frozen { background:#fffaf0 }
+  tr.frozen td:last-child { color:var(--warn) }
   .before { background:#fff5f5 } .after { background:#f2fbf5 }
   .before, .after { font:12px/1.5 ui-monospace,Menlo,monospace }
   .extract { margin:10px 0 14px }
@@ -50,8 +54,8 @@
 <div class="cards">
   <div class="card"><h4>Registre de langue</h4>
     <div class="big">prose EN, contrats FR</div>
-    <p class="note">La prose passe en anglais ; les littéraux que la machine relit restent
-    français, verbatim.</p></div>
+    <p class="note">La prose passe en anglais ; les 2 <b>protocoles</b> que la machine
+    relit restent français, verbatim (voir §3).</p></div>
   <div class="card"><h4>Corpus à traduire</h4>
     <div class="big">20 fichiers</div>
     <p class="note">3 052 lignes, dont 1 559 portent un diacritique.
@@ -98,27 +102,35 @@
         <tr><td class="before">- [[issue-2]] — Rewrite in english (documentation-wide translation).</td><td class="after">- [[issue-1]] — Full pipeline cycle check.<br>- [[issue-2]] — Rewrite in english (documentation-wide translation).</td></tr>
       </table>
     </div>
-<p class="note">Les exemples ci-dessus montrent la règle : la phrase change de langue,
-les 5 titres de section et les mots-clés Gherkin ne changent pas — ce sont eux que le
-linter lit.</p>
+<p class="note">Les exemples ci-dessus montrent la règle : la phrase change de langue. Les
+5 titres de section, eux, changent AUSSI depuis la décision du 20/09 — le linter
+lit les deux jeux (§3) ; seuls les 2 protocoles machine restent verbatim.</p>
 
-<h2>3. Littéraux GELÉS — jamais traduits (le contrat machine reste français)</h2>
-<table><tr><th style="width:32%">littéral</th><th>pourquoi il ne peut pas être traduit</th></tr>
-<tr><td><code>Contexte &amp; Objectif</code></td><td>les 5 titres de section de <code>pj_card_lint</code></td></tr>
-<tr><td><code>Critères d'acceptation</code></td><td>4 des 5 titres sont FR-only : le linter ne connaît pas <code>Context &amp; Objective</code></td></tr>
-<tr><td><code>DoR &amp; DoD</code></td><td>seul titre déjà accepté en anglais</td></tr>
-<tr><td><code>Considérations techniques</code></td><td>FR-only</td></tr>
-<tr><td><code>Hors-scope</code></td><td>FR-only</td></tr>
-<tr><td><code>Fonctionnalité: / Scénario:</code></td><td>mots-clés Gherkin</td></tr>
-<tr><td><code>Étant donné / Quand / Alors</code></td><td>étapes Gherkin</td></tr>
-<tr><td><code>Importé depuis</code></td><td>marqueur de pont — lu par le bridge, le deployeur et <code>pj_card_lint.is_spec</code></td></tr>
-<tr><td><code>ROOM:</code></td><td>marqueur de room — regex de <code>pj_room_keeper</code></td></tr>
-<tr><td><code>jamais / ne pas</code></td><td>vocabulaire de garde-fou : le linter ne connaît que <code>no </code>, <code>forbidden</code>, <code>must not</code></td></tr></table>
-<div class="warnbox"><b>Pourquoi c'est un gate et pas un détail.</b> Une carte écrite
-entièrement en anglais est refusée par <code>pj_card_lint</code> (mesuré : 4 sections
-« manquantes » sur 5) — traduire ces titres rendrait le pipeline entier infranchissable à
-t5. Le fichier d'exclusion est donc <b>versionné</b>, chaque entrée portant le script
-et la ligne qui la relit.</div>
+<h2>3. Libellés de gate — TRADUITS (linter élargi) ; 2 protocoles gelés</h2>
+<table><tr><th style="width:38%">libellé</th><th>statut</th></tr>
+<tr><td><code>Contexte &amp; Objectif</code> → <code>Context &amp; Objective</code></td><td class="tr">traduit — les deux jeux sont reconnus</td></tr>
+<tr><td><code>Critères d'acceptation</code> → <code>Acceptance criteria</code></td><td class="tr">traduit — les deux jeux sont reconnus</td></tr>
+<tr><td><code>DoR &amp; DoD</code></td><td class="tr">identique dans les deux langues</td></tr>
+<tr><td><code>Considérations techniques</code> → <code>Technical considerations</code></td><td class="tr">traduit — les deux jeux sont reconnus</td></tr>
+<tr><td><code>Hors-scope</code> → <code>Out of scope</code></td><td class="tr">traduit — les deux jeux sont reconnus</td></tr>
+<tr><td><code>Fonctionnalité:</code> → <code>Feature:</code></td><td class="tr">traduit — mots-clés Gherkin des deux langues</td></tr>
+<tr><td><code>Scénario:</code> → <code>Scenario:</code></td><td class="tr">traduit — <code>Scenario</code>, <code>Example</code> acceptés</td></tr>
+<tr><td><code>Étant donné / Quand / Alors</code> → <code>Given / When / Then</code></td><td class="tr">traduit — étapes Gherkin des deux langues</td></tr>
+<tr><td><code>jamais / ne pas</code> → <code>never / do not</code></td><td class="tr">traduit — <code>never</code>, <code>do not</code>, <code>don't</code>, <code>guardrail</code> acceptés</td></tr>
+<tr class="frozen"><td><code>Importé depuis</code></td><td><b>GELÉ — protocole</b> : lu par le pont (<code>gh_kanban_bridge</code>), le déployeur et <code>pj_card_lint.is_spec</code>. Le traduire rend le pont muet, sans erreur.</td></tr>
+<tr class="frozen"><td><code>ROOM:</code></td><td><b>GELÉ — protocole</b> : regex de <code>pj_room_keeper</code>, chaîne machine sans lecteur humain.</td></tr>
+</table>
+<p class="note">Les lecteurs des 2 protocoles, vérifiés à la ligne citée :
+<code>pj_pipeline_deployer.py:270</code>, <code>gh_kanban_bridge.py:308</code>,
+<code>pj_room_keeper.py:76</code>.</p>
+<div class="warnbox"><b>Pourquoi c'est un gate et pas un détail.</b> Avant le 20/09, une
+carte écrite entièrement en anglais était refusée par <code>pj_card_lint</code>
+(mesuré : 4 sections « manquantes » sur 5) et traduire ces titres aurait rendu le
+pipeline infranchissable à t5. <b>C'est corrigé</b> : le linter est désormais bilingue
+— les deux jeux de titres sont acceptés, et ses messages de sortie sont en anglais.
+La correction du linter est portée par la <b>slice 2</b>, ses fichiers d'exclusion
+(quand la slice 2 livre un scan) sont <b>versionnés</b>, chaque entrée portant le
+script et la ligne qui la relit.</div>
 
 <h2>4. Tableau d'impact mesuré — par slice</h2>
 <table>
@@ -126,9 +138,9 @@ et la ligne qui la relit.</div>
       <th class="n">lignes</th>
       <th class="n">dont accentuées</th><th>dimensionnement INVEST</th></tr>
 <tr><td class='k'>1</td><td>Planche comparative — l'ARTEFACT de t3, validé à ce gate<br><code>preview-issue-2-plate</code></td><td class='n'>2</td><td class='n'>0</td><td class='n'>0</td><td>fichiers à CRÉER (pas de traduction) — dimensionnement en volume de code, pas en lignes traduites</td></tr>
-<tr><td class='k'>2</td><td>Outil de scan de langue + fichier d'exclusion gelé + test de l'outil<br><code>lang-lint-outil</code></td><td class='n'>3</td><td class='n'>0</td><td class='n'>0</td><td>fichiers à CRÉER (pas de traduction) — dimensionnement en volume de code, pas en lignes traduites</td></tr>
+<tr><td class='k'>2</td><td>Outil de scan de langue + <b>linter de cartes rendu bilingue</b> + test de l'outil<br><code>i18n-lint-bilingue</code></td><td class='n'>4</td><td class='n'>0</td><td class='n'>0</td><td>fichiers à CRÉER/modifier (pas de traduction) — dimensionnement en volume de code, pas en lignes traduites</td></tr>
 <tr><td class='k'>3</td><td>Documents racine : README, CONTRIBUTING, gabarit de ticket<br><code>readme-contributing-ticket</code></td><td class='n'>3</td><td class='n'>319</td><td class='n'>121</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
-<tr><td class='k'>4</td><td>SOUL de pj-master — le fichier le plus exposé aux citations gelées<br><code>soul-pj-master</code></td><td class='n'>1</td><td class='n'>337</td><td class='n'>190</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>4</td><td>SOUL de pj-master — le fichier historiquement le plus exposé au gel des libellés<br><code>soul-pj-master</code></td><td class='n'>1</td><td class='n'>337</td><td class='n'>190</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>5</td><td>Les trois SOUL de production (dev, doc, test)<br><code>soul-dev-doc-test</code></td><td class='n'>3</td><td class='n'>292</td><td class='n'>145</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>6</td><td>Skill du pont GitHub↔kanban + ses deux références<br><code>skill-gh-kanban-bridge</code></td><td class='n'>3</td><td class='n'>342</td><td class='n'>138</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>7</td><td>Skills de pipeline + skill de gate<br><code>skills-pipelines-gate</code></td><td class='n'>3</td><td class='n'>225</td><td class='n'>92</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
@@ -158,11 +170,14 @@ attendue au rebase : garder <b>les deux lignes</b> — <code>[[issue-1]]</code> 
 <ul>
   <li>Le code <code>.py</code>/<code>.sh</code>, les commentaires, les docstrings :
       hors périmètre (Q1=A). Les copies exécutées par les crons ne sont pas touchées (Q3=A).</li>
-  <li><code>pj_card_lint</code> n'est pas rendu bilingue (Q2=A) : on gèle, on ne patche pas.</li>
+  <li><code>pj_card_lint</code> est rendu <b>bilingue</b> par la slice 2 : les deux jeux
+      de titres de section sont acceptés, les messages de sortie passent en anglais.
+      Les cartes françaises déjà en base restent conformes.</li>
   <li>Aucun merge n'est effectué : la PR est ouverte en draft au gate t6.</li>
 </ul>
 
-<footer>Artefact produit par la carte t4 (<code>t_89588b94</code>) — board
+<footer>Artefact produit par la carte t4 (<code>t_89588b94</code>), <b>corrigé par la carte
+conv-1 (<code>t_e9b8c2cf</code>) après la décision humaine du 20/09</b> — board
 <code>pj-hermes-workflow</code> · chiffres mesurés sur l'arbre réel, jamais estimés ·
 rendu PNG par <code>chromium headless_shell</code>.</footer>
 <script type="application/json" id="plate-ledger">
@@ -190,7 +205,7 @@ rendu PNG par <code>chromium headless_shell</code>.</footer>
     },
     {
       "k": 2,
-      "slug": "lang-lint-outil",
+      "slug": "i18n-lint-bilingue",
       "kind": "create",
       "files": {},
       "lines": 0,
@@ -378,68 +393,56 @@ rendu PNG par <code>chromium headless_shell</code>.</footer>
       "why": "already English — its accents are citations of the frozen French contract"
     }
   ],
+  "gate_labels": {
+    "rule": "bilingual — the two sets of section titles are both accepted (human decision of 2026-09-20)",
+    "translated": [
+      {"fr": "Contexte & Objectif", "en": "Context & Objective", "read_by": "pipeline/pj_card_lint.py:33"},
+      {"fr": "Critères d'acceptation", "en": "Acceptance criteria", "read_by": "pipeline/pj_card_lint.py:34"},
+      {"fr": "DoR & DoD", "en": "DoR & DoD", "read_by": "pipeline/pj_card_lint.py:35"},
+      {"fr": "Considérations techniques", "en": "Technical considerations", "read_by": "pipeline/pj_card_lint.py:36"},
+      {"fr": "Hors-scope", "en": "Out of scope", "read_by": "pipeline/pj_card_lint.py:37"},
+      {"fr": "Fonctionnalité:", "en": "Feature:", "read_by": "pipeline/pj_card_lint.py:39"},
+      {"fr": "Scénario:", "en": "Scenario:", "read_by": "pipeline/pj_card_lint.py:40"},
+      {"fr": "Étant donné / Quand / Alors", "en": "Given / When / Then", "read_by": "pipeline/pj_card_lint.py:41"},
+      {"fr": "jamais / ne pas", "en": "never / do not", "read_by": "pipeline/pj_card_lint.py:44"}
+    ],
+    "corrected_by": "slice 2 (i18n-lint-bilingue): pipeline/pj_card_lint.py + pipeline/pj_lang_lint.py + tests"
+  },
   "frozen_literals": [
-    {
-      "literal": "Contexte & Objectif",
-      "read_by": "pipeline/pj_card_lint.py:33",
-      "family": "sect"
-    },
-    {
-      "literal": "Critères d'acceptation",
-      "read_by": "pipeline/pj_card_lint.py:34",
-      "family": "sect"
-    },
-    {
-      "literal": "DoR & DoD",
-      "read_by": "pipeline/pj_card_lint.py:35",
-      "family": "sect"
-    },
-    {
-      "literal": "Considérations techniques",
-      "read_by": "pipeline/pj_card_lint.py:36",
-      "family": "sect"
-    },
-    {
-      "literal": "Hors-scope",
-      "read_by": "pipeline/pj_card_lint.py:37",
-      "family": "sect"
-    },
-    {
-      "literal": "Fonctionnalité:",
-      "read_by": "pipeline/pj_card_lint.py:39",
-      "family": "gherkin"
-    },
-    {
-      "literal": "Scénario:",
-      "read_by": "pipeline/pj_card_lint.py:40",
-      "family": "gherkin"
-    },
-    {
-      "literal": "Étant donné / Quand / Alors",
-      "read_by": "pipeline/pj_card_lint.py:41",
-      "family": "gherkin"
-    },
     {
       "literal": "Importé depuis",
       "read_by": "pipeline/pj_pipeline_deployer.py:270",
-      "family": "pont"
+      "also_read_by": ["pipeline/gh_kanban_bridge.py:308", "pipeline/engine.py:265", "pipeline/pj_card_lint.py:161"],
+      "family": "protocole",
+      "why": "bridge marker: translating it makes the bridge silent, without an error"
     },
     {
       "literal": "ROOM:",
       "read_by": "pipeline/pj_room_keeper.py:76",
-      "family": "room"
-    },
-    {
-      "literal": "jamais / ne pas",
-      "read_by": "pipeline/pj_card_lint.py:44",
-      "family": "guardrail"
+      "family": "protocole",
+      "why": "machine-only marker, no human reader"
     }
   ],
   "provenance": {
     "ratified_artifact_sha256": "14b7bfa7b23f80e2e945bd36cb75a555280a800f18f95c3a8fd4680d874b2fe1",
     "ratified_artifact_md5": "38c75499f2a85fe97ed251a94487061b",
     "ledger_added_by": "slice 1 dev (t_f8988040) — machine block, not rendered",
-    "measured_at": "4c34c95c38a4f2bac1111a3dd439dbedfd132196"
+    "measured_at": "6d787c5 (the commit that carried the ratified plate; the corpus numbers below are unaffected by the 20/09 correction)",
+    "correction": {
+      "by": "conv-1 t_e9b8c2cf (pj-test)",
+      "human_decision": "2026-09-20 — gate labels move to English, the linter becomes bilingual",
+      "why": "the published plate still carried a §3 classifying 5 section titles as FR-only, which the human decision invalidates",
+      "changed": [
+        "§1/§2 prose: the section titles are NO LONGER frozen — only the 2 protocols are",
+        "§3: 'Littéraux GELÉS' replaced by 'Libellés de gate — TRADUITS ; 2 protocoles gelés'",
+        "§4: slice 2 row = i18n-lint-bilingue (4 files), slice 4 wording",
+        "§6: pj_card_lint is bilingual, not frozen",
+        "register: frozen_literals reduced to the 2 protocols; the 9 translated labels moved to gate_labels with the line that reads each",
+        "register: slice 2 slug lang-lint-outil -> i18n-lint-bilingue"
+      ],
+      "not_changed": "the measured corpus totals (20 files / 3052 lines / 1559 accented lines) — no corpus .md was touched",
+      "ratified_status": "the plate is no longer byte-identical to the artifact ratified at gate t5; the human must judge THIS rendering"
+    }
   }
 }
 </script>
