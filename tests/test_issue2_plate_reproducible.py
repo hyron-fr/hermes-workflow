@@ -1199,6 +1199,17 @@ def test_nominal_les_familles_de_refus_atteignables_sont_gelees(clone_tip):
         assert atteintes, (
             "%s : aucune famille de refus atteignable — un linter muet n'est pas un linter "
             "conforme" % rel)
+
+    # 4. Le classement ne DEVINE pas : un message inconnu n'est rattaché à aucune famille.
+    #    Contrôle de la route de repli, sans quoi un libellé non reconnu serait silencieusement
+    #    rattaché à une famille et masquerait la perte qu'il devrait signaler.
+    assert _famille_de("un message qui n'appartient à aucune famille connue") is None, (
+        "un message INCLASSABLE doit rendre None, jamais une famille par défaut : sinon un "
+        "refus disparaîtrait sans que l'ensemble perde quoi que ce soit")
+    assert _famille_de("missing section: « Hors-scope »") == "section", (
+        "le classement doit reconnaître l'un des refus réels du linter")
+    print("witness classement : repli None et « section » reconnu")
+
     print("witness familles gelées : %d familles attendues %s"
           % (len(FAMILLES_ATTENDUES), sorted(FAMILLES_ATTENDUES)))
 
