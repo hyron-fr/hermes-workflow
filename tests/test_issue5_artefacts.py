@@ -33,7 +33,13 @@ Codes de sortie du script :
     2  erreur d'usage : page introuvable, registre `decision-flow-ledger` absent ou illisible,
        artefact déclaré sans son élément rendu (`data-artefact="<name>"`).
 
-Le script est **pur** : aucun réseau, aucun fichier écrit.
+Le script est **pur** : aucun réseau, aucun fichier écrit — et « aucun fichier » veut dire
+**nulle part** : ni dans le répertoire des artefacts, ni à la racine du dépôt, ni dans
+`docs/architecture/`, ni dans `tests/`, ni sous `/tmp`. Le garde correspondant
+(`test_nominal_le_banc_ne_touche_aucun_fichier`) mesure dans une **copie isolée** du dépôt,
+sous une **sentinelle d'audit**, et compare à un **ensemble attendu** : un instantané d'UN
+seul répertoire, pris après que cinq autres cas ont déjà lancé le script, ne pouvait pas
+échouer — masqué par l'ordre de la suite (mesuré par conv-1, `t_c54e8624`).
 
 Sources verbatim à copier **octet pour octet** (elles sont déjà ratifiées) :
 
@@ -54,7 +60,9 @@ import base64
 import hashlib
 import html
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -244,6 +252,155 @@ def _assert_nomme(res, *aiguilles):
     )
 
 
+# --- outils de mesure du garde d'écriture ----------------------------------------------
+#
+# Le garde « le script n'écrit rien » a été mesuré FAUX par conv-1 (`t_c54e8624`) sous deux
+# angles, et ces outils ferment les deux :
+#
+#   A. ORDRE : la version précédente comparait un instantané du seul répertoire des artefacts,
+#      pris après que 5 cas avaient déjà lancé le script — son propre mutant survivait donc à
+#      la SUITE ENTIÈRE (`rc=0, 20 passed`) alors que le cas cible seul rougissait (`rc=1`).
+#      Ici la référence est l'ensemble ATTENDU des fichiers, et la mesure se fait dans une
+#      COPIE ISOLÉE du dépôt : le résultat ne dépend d'aucun autre cas.
+#   B. PORTÉE : l'instantané d'un seul répertoire laissait vertes les écritures à la racine du
+#      dépôt, dans `docs/architecture/`, dans `tests/` et sous `/tmp`. Ici (1) toute écriture
+#      DANS la copie est un écart (l'arbre entier est comparé), et (2) la SENTINELLE journalise
+#      les écritures qui ne touchent pas la copie (chemins absolus, `/tmp`, dépôt partagé).
+
+SENTINELLE = '''\
+import os
+import sys
+
+_log = os.environ.get("PJ_WRITE_SENTINEL_LOG")
+if _log:
+    _fd = os.open(_log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    _EVENEMENTS = ("os.remove", "os.rename", "os.mkdir", "os.rmdir", "os.link",
+                   "os.symlink", "os.truncate", "os.chmod", "os.chown",
+                   "shutil.copyfile", "shutil.copymode", "shutil.copystat",
+                   "shutil.move", "shutil.rmtree", "tempfile.mkstemp", "tempfile.mkdtemp")
+
+    def _journalise(event, args):
+        """Toute ouverture en ÉCRITURE, toute création : journalisée, où qu'elle aille."""
+        try:
+            if event == "open":
+                chemin, mode, flags = args
+                ecrit = isinstance(mode, str) and any(c in mode for c in "wax+")
+                if not ecrit and isinstance(flags, int):
+                    ecrit = bool(flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT
+                                          | os.O_APPEND | os.O_TRUNC))
+                if ecrit:
+                    os.write(_fd, ("open %r mode=%r flags=%r\\n"
+                                   % (str(chemin), mode, flags)).encode("utf-8"))
+            elif event in _EVENEMENTS:
+                os.write(_fd, ("%s %r\\n" % (event, args)).encode("utf-8"))
+        except Exception:                                     # noqa: BLE001
+            pass
+
+    sys.addaudithook(_journalise)
+'''
+
+IGNORE_ARBRE = (".git", "__pycache__")
+
+
+def _copie_isolee_du_depot(dest):
+    """Copie le dépôt SOUS `dest` et renvoie le chemin du script de mesure de la copie.
+
+    Le script est lancé DEPUIS la copie : `HERE` y pointe, donc une écriture « relative au
+    script » aboutit dans la copie et non dans le worktree partagé — et le garde juge l'arbre
+    entier, pas un seul répertoire. Les `.git` (0 octet ici : worktree) et `__pycache__` sont
+    écartés pour que la copie reste petite et stable.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(REPO, dest, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns(*IGNORE_ARBRE), symlinks=True)
+    return dest / "docs" / "architecture" / "context" / MEASURE.name
+
+
+def _arbre(racine):
+    """Ensemble ATTENDU des fichiers de `racine` : chemin relatif -> sha256 (ou None : lien).
+
+    C'est l'ensemble de référence explicite. Un instantané pris APRÈS qu'un autre cas a lancé
+    le script contiendrait déjà l'intrus : c'est exactement le masque que ce garde ferme.
+    """
+    vus = {}
+    for p in sorted(Path(racine).rglob("*")):
+        rel = p.relative_to(racine)
+        if any(partie in IGNORE_ARBRE for partie in rel.parts):
+            continue
+        if p.is_symlink():
+            vus[str(rel)] = None
+        elif p.is_file():
+            vus[str(rel)] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return vus
+
+
+def _site_sentinelle(tmp_path):
+    """Écrit le `sitecustomize.py` de la sentinelle et renvoie son répertoire."""
+    site = tmp_path / "sentinel-site"
+    site.mkdir(parents=True, exist_ok=True)
+    (site / "sitecustomize.py").write_text(SENTINELLE, encoding="utf-8")
+    r = subprocess.run([sys.executable, "-m", "sitecustomize"], capture_output=True,
+                       text=True, cwd=str(site))
+    assert r.returncode == 0, (
+        "la sentinelle ne doit pas casser le démarrage de Python (c'est la garde qui doit\n"
+        f"échouer sur une écriture, pas l'instrumentation) :\n{r.stderr}"
+    )
+    return site
+
+
+def _run_sentinelle(measure, copie, site, journal, plate=None):
+    """Lance le script DE LA COPIE, sentinelle active, `cwd` dans la copie, sans écriture .pyc."""
+    env = dict(os.environ)
+    env["PJ_WRITE_SENTINEL_LOG"] = str(journal)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    ancien = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(site) + (os.pathsep + ancien if ancien else "")
+    cmd = [sys.executable, "-B", str(measure)]
+    if plate is not None:
+        cmd += ["--plate", str(plate)]
+    return subprocess.run(cmd, capture_output=True, text=True, cwd=str(copie), env=env)
+
+
+def _journal(journal):
+    """Lignes du journal de la sentinelle (chemin ABSOLU de `sys.executable` et de la copie
+    exclus : le script réel peut relire sa page via `pathlib`, et `.pyc` désactivé)."""
+    if not Path(journal).is_file():
+        return []
+    interdits = {"open %r mode='r'" % str(sys.executable), "open %r mode='rb'" % str(sys.executable)}
+    lignes = []
+    for brute in Path(journal).read_text(encoding="utf-8", errors="replace").splitlines():
+        if brute in interdits:
+            continue
+        lignes.append(brute)
+    return lignes
+
+
+def _assert_aucune_ecriture(copie, attendu, journal, chemin):
+    """Deux gardes indépendants : rien écrit DANS la copie, rien ouvert en écriture du tout.
+
+    L'assertion est l'INVERSE de la mutation : elle nomme le fichier intrus, sa provenance et
+    le journal brut, pour qu'un rouge soit lisible sans relance.
+    """
+    apres = _arbre(copie)
+    if apres != attendu:
+        ajoutes = sorted(set(apres) - set(attendu))
+        disparus = sorted(set(attendu) - set(apres))
+        modifies = sorted(k for k in set(apres) & set(attendu) if apres[k] != attendu[k])
+        pytest.fail(
+            f"chemin {chemin} : le script de mesure a ÉCRIT dans la copie du dépôt.\n"
+            f"  fichiers introduits : {ajoutes or '—'}\n"
+            f"  fichiers modifiés   : {modifies or '—'}\n"
+            f"  fichiers supprimés  : {disparus or '—'}\n"
+            f"  journal de la sentinelle :\n    " + "\n    ".join(_journal(journal))
+        )
+    intrus = _journal(journal)
+    assert not intrus, (
+        f"chemin {chemin} : le script de mesure a OUVERT EN ÉCRITURE un fichier hors de la "
+        f"portée surveillée — la promesse est « aucune écriture », sans qualification de "
+        f"répertoire :\n    " + "\n    ".join(intrus)
+    )
+
+
 # ==========================================================================
 # A. NOMINAL — le banc reproduit les deux artefacts ratifiés
 # ==========================================================================
@@ -339,34 +496,78 @@ def test_nominal_la_page_est_inerte_et_hors_reseau():
 
 
 def test_nominal_le_banc_ne_touche_aucun_fichier(tmp_path):
-    """NOMINAL — le script MESURE : il n'écrit rien, ni sur un écart ni sur la page.
+    """NOMINAL — le script MESURE : il n'écrit rien, NI ICI NI AILLEURS.
 
-    Mesure déterministe : on compare l'état du RÉPERTOIRE des artefacts (contenu + liste)
-    avant/après, et non `git status` — le worktree est PARTAGÉ avec la carte dev, un
-    `git status` bougerait pour des raisons étrangères au script (faux rouge).
-    Le cas est rejoué sur un ÉCART, qui est le chemin où un script bavard écrit volontiers
-    un rapport.
+    Masque mesuré par conv-1 (`t_c54e8624`, comment 363) sur la version précédente : elle
+    comparait l'instantané du SEUL répertoire des artefacts, pris APRÈS que cinq autres cas
+    avaient déjà lancé le script — elle laissait donc passer son propre mutant sur la suite
+    ENTIÈRE (`rc=0, 20 passed`) alors que le cas cible seul rougissait, et elle ne voyait ni
+    la racine du dépôt, ni `docs/architecture/`, ni `tests/`, ni `/tmp` (4 mutations vertes).
+
+    Deux mesures INDÉPENDANTES de l'ordre de la suite :
+
+      1. **copie isolée** du dépôt, comparée à l'arbre ATTENDU (jamais à un instantané pris
+         après qu'un autre cas a tourné) : toute écriture dans la copie se voit, où qu'elle
+         soit dans l'arbre ;
+      2. **sentinelle d'audit** (PEP 578) posée chez le processus enfant : toute ouverture en
+         écriture (mode `w`/`a`/`x`/`+` ou `O_WRONLY`/`O_RDWR`/`O_CREAT`/`O_APPEND`/
+         `O_TRUNC`) et toute création `os.*`/`shutil.*`/`tempfile.*` est journalisée, y compris
+         vers `/tmp` ou vers le dépôt partagé.
+
+    Le banc ne juge JAMAIS le site d'installation de `pathlib` du processus du BANC : ce
+    fichier s'écrit légitimement (`pathlib.py` → `.pyc`) à chaque exécution ; seul le journal
+    du processus ENFANT est jugé, et lui ne s'écrit que dans ce répertoire temporaire.
     """
-    def etat():
-        return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in sorted(CONTEXT.iterdir()) if p.is_file()}
+    copie = tmp_path / "copie"
+    measure = _copie_isolee_du_depot(copie)
+    site = _site_sentinelle(tmp_path)
+    journal = tmp_path / "sentinelle.log"
 
-    avant = etat()
-    assert _run().returncode == 0
-    assert etat() == avant, (
-        "le script de mesure a modifié le répertoire des artefacts en cas de concordance"
+    # (0) la mesure porte sur la COPIE — jamais sur l'arbre partagé avec la carte dev. Aucune
+    # assertion n'est faite sur l'état du worktree partagé : il bouge légitimement pendant que
+    # ce banc tourne (`docs/architecture/context/**` est le domaine de `pj-dev`), une
+    # comparaison y produirait des rouges étrangers au script. Le sujet est la copie.
+    assert str(measure).startswith(str(copie)), (
+        f"le banc doit mesurer le script de SA copie isolée, pas {measure}"
     )
 
-    copie = _copie(tmp_path, "en-ecart.html")
-    txt = copie.read_text(encoding="utf-8")
-    copie.write_text(txt.replace("Posté dans", "Posté danS", 1), encoding="utf-8")
-    avant_ecart = etat()
-    res = _run(plate=copie)
-    assert res.returncode == 1
-    assert etat() == avant_ecart, (
-        "le script de mesure a écrit un fichier en cas d'écart : il doit rester en lecture "
-        "seule (aucun rapport sur disque)"
+    # (1) l'ARBRE ATTENDU — l'ensemble explicite des fichiers, pas un instantané tardif.
+    attendu = _arbre(copie)
+    for requis in ("docs/architecture/context/issue-5-decision-flow.html",
+                   "docs/architecture/context/issue-5-decision-flow.measure.py",
+                   "tests/test_issue5_artefacts.py"):
+        assert requis in attendu, f"copie isolée incomplète : {requis} absent de {copie}"
+
+    # (2) CONCORDANCE — chemin nominal.
+    res = _run_sentinelle(measure, copie, site, journal)
+    assert res.returncode == 0, (
+        f"le script de mesure doit sortir 0 sur la copie isolée ; rc={res.returncode}\n"
+        f"stdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     )
+    _assert_aucune_ecriture(copie, attendu, journal, "concordance")
+
+    # (3) ÉCART — le chemin où un script bavard écrit volontiers un rapport.
+    plate_ecart = copie / "en-ecart.html"
+    txt = _plate_text().replace("Posté dans", "Posté danS", 1)
+    assert "Posté danS" in txt, "la mutation du cas doit porter sur la page de référence"
+    plate_ecart.write_text(txt, encoding="utf-8")
+    attendu_ecart = _arbre(copie)              # l'arbre attendu, mutation COMPRISE
+    journal.unlink(missing_ok=True)
+    res = _run_sentinelle(measure, copie, site, journal, plate=plate_ecart)
+    assert res.returncode == 1, (
+        f"la page en écart doit faire sortir 1 ; rc={res.returncode}\n{res.stdout}\n{res.stderr}"
+    )
+    _assert_aucune_ecriture(copie, attendu_ecart, journal, "écart")
+
+    # (4) ERREUR D'USAGE — le 3e chemin de sortie, lui aussi sans écriture.
+    journal.unlink(missing_ok=True)
+    absente = copie / "docs" / "architecture" / "context" / "absente.html"
+    res = _run_sentinelle(measure, copie, site, journal, plate=absente)
+    assert res.returncode == 2, (
+        f"page introuvable = erreur d'usage (2) sur la copie ; rc={res.returncode}\n"
+        f"{res.stdout}\n{res.stderr}"
+    )
+    _assert_aucune_ecriture(copie, attendu_ecart, journal, "erreur d'usage")
 
 
 # ==========================================================================
