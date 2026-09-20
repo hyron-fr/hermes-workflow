@@ -120,6 +120,12 @@ _URL_RE = re.compile(r"https?://\S+")
 # La ligne d'import que `pull()` ajoute à la carte racine : seul ancrage fiable
 # du numéro d'issue d'un graphe (le corps d'une carte peut citer n'importe quoi).
 _IMPORT_URL_RE = re.compile(r"/issues/(\d+)")
+# La ligne d'import que `pull()` écrit lui-même — préfixe EXACT, en tête de ligne.
+# C'est le seul ancrage du numéro d'issue d'une carte racine : un corps de carte
+# cite n'importe quoi (une autre issue en prose, une URL en exemple, le gabarit
+# `Issue GitHub : …` du t6). Ancrer sur la LIGNE, jamais sur le premier `/issues/<n>`.
+_IMPORT_LINE_PREFIX = "Importé depuis"
+_IMPORT_LINE_RE = re.compile(r"^[ \t]*%s\b" % re.escape(_IMPORT_LINE_PREFIX))
 # Titre du gabarit de graphe : « t1 worktree », « t3b doc-cadrage #5 », « t6 submitted #2 ».
 _GRAPH_TITLE_RE = re.compile(r"^t\d+[a-z]?\b")
 _STOPWORDS = {
@@ -530,15 +536,29 @@ def list_tasks() -> list[dict]:
 
 
 def issue_number_of(task: dict) -> int | None:
-    """Numéro d'issue GitHub lié à une carte.
+    """Numéro d'issue GitHub lié à une carte — ANCRÉ sur la ligne d'import.
 
-    Le champ idempotency_key n'est pas exposé dans l'API JSON kanban :
-    on déduit le numéro depuis l'URL d'import que le pull a ajoutée au
-    body ('Importé depuis https://github.com/<repo>/issues/<n>').
+    Le champ idempotency_key n'est pas exposé dans l'API JSON kanban : on déduit
+    le numéro de la ligne que `pull()` a ÉCRITE lui-même,
+    « Importé depuis https://github.com/<repo>/issues/<n> ».
+
+    La règle est ANCRÉE EN TÊTE DE LIGNE, jamais un `re.search` sur tout le body.
+    Mesuré sur le board réel : un body peut citer une AUTRE issue avant sa propre
+    ligne d'import (une issue en prose, le gabarit `Issue GitHub : …/issues/N` du
+    t6, un exemple de sous-chaîne `/issues/5` ⊂ `/issues/40`), et le premier
+    `/issues/<n>` du texte n'est alors pas le sien. Une carte `done` fermerait
+    l'issue d'un autre — c'est le défaut que ce correctif ferme.
+
+    Aucune ligne d'import ⇒ None : `push()` ignore la carte et ne ferme rien.
     """
-    m = re.search(r"github\.com/%s/issues/(\d+)" % re.escape(GH_REPO),
-                  task.get("body") or "")
-    return int(m.group(1)) if m else None
+    body = task.get("body") or ""
+    for line in body.splitlines():
+        if not _IMPORT_LINE_RE.match(line):
+            continue
+        m = re.search(r"github\.com/%s/issues/(\d+)" % re.escape(GH_REPO), line)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def push() -> None:
