@@ -5,432 +5,432 @@ version: 1.0.0
 tags: [hermes, kanban, bots, orchestration]
 ---
 
-# Orchestration multi-agents avec le builtin Hermes
+# Multi-agent orchestration with the Hermes builtin
 
-Classe : construire un pipeline multi-agents (ex. profil scrum orchestrateur + bots
-spécialistes) avec UNIQUEMENT les primitives builtin — kanban durable, Bot Mode,
-hooks, cron — sans moteur d'orchestration custom.
+Class: build a multi-agent pipeline (e.g. a scrum orchestrator profile + specialist
+bots) with the builtin primitives ONLY — durable kanban, Bot Mode, hooks, cron —
+without a custom orchestration engine.
 
-## Règles toujours vraies
+## Rules that always hold
 
-- **Builtin vs on-top, séparés explicitement.** Les systèmes durables builtin :
-  delegate_task, cron, curator, kanban (+ Bot Mode = UI desktop par-dessus les
-  profils ; un bot EST un profil). Le moteur workflow YAML (`workflows/*.yaml` +
-  gate qui charge `workflow_template_id`) et le pont GitHub sont du glue CUSTOM
-  du repo hermes-experiment : ne JAMAIS les présenter comme builtin ; les
-  nommer comme custom quand ils interviennent. (Correction user expresse.)
-- **Vérifier dans la source avant d'affirmer** une capacité kanban :
-  `hermes_cli/kanban_db.py` (statuts, transitions, colonnes) +
-  `hermes kanban <verb> --help` (ex. pas de sous-commande `update`).
-- **La machine à états est builtin et intouchable.** 9 statuts fixes :
+- **Builtin vs on-top, kept explicitly apart.** Durable builtin systems:
+  delegate_task, cron, curator, kanban (+ Bot Mode = desktop UI on top of the
+  profiles; a bot IS a profile). The YAML workflow engine (`workflows/*.yaml` +
+  gate loading `workflow_template_id`) and the GitHub bridge are CUSTOM glue
+  of the hermes-experiment repo: NEVER present them as builtin; name them as
+  custom whenever they come into play. (Express user correction.)
+- **Check the source before asserting** a kanban capability:
+  `hermes_cli/kanban_db.py` (statuses, transitions, columns) +
+  `hermes kanban <verb> --help` (e.g. no `update` sub-command).
+- **The state machine is builtin and untouchable.** 9 fixed statuses:
   `triage, todo, scheduled, ready, running, blocked, review, done, archived`.
-  Pas de statuts custom sans patcher le core — le design s'y oppose. Les
-  "étapes" métier vivent dans les colonnes natives `workflow_template_id` +
-  `current_step_key` (données de carte, filtrables via
-  `kanban list --workflow-template-id/--step-key`). Avancer une étape =
-  bookkeeping de l'orchestrateur sur la carte, pas une transition de statut.
-- **Deux types de gate, ne pas les confondre.** (1) Gate d'admission = hook
-  `kanban_task_claimed`, AVANT le spawn du worker. (2) Gate de résultat = APRÈS
-  le travail : `kanban_request_review` / `kanban_request_changes` (natif —
-  "les tests échouent, reprends ton code" est ce chemin, pas la gate de claim)
-  ou completion contract PR (`--completion-contract`, done refusé sans checks
-  requis verts). Réutiliser la gate de claim pour un contrôle après coup est
-  impossible : elle s'exécute avant que le travail existe.
-- **Sens des liens = qui attend qui (vérifié `kanban_db.py`).** `link
-  <parent> <child>` / `create --parent X` : l'ENFANT attend la fin du parent
-  (multi-parents = ET logique ; `recompute_ready` garde l'enfant `todo` tant
-  qu'un parent n'est pas done, et le résumé de chaque parent done est injecté
-  au worker enfant via `_ctx_parent_results`). Une carte « synthèse/submitted »
-  qui doit attendre ses sous-tâches se construit à l'ENVERS : chaque sous-tâche
-  est PARENT de la carte synthèse (pattern decompose : la racine est liée sous
-  chaque enfant et se réveille quand tout le graphe est done). Jamais
-  `--parent <synthèse>` sur une de ses entrées — deadlock (l'entrée attend la
-  done de la synthèse, qui attend que les entrées produisent).
-- **Une carte racine d'orchestration n'est pas un worker one-shot.** Un worker
-  spawné ne peut pas « rendre la main » : `complete` la marque done (ferme le
-  ticket/issue amont trop tôt), `block` est sticky. La racine qui déploie un
-  graphe se parque en `--triage` (à l'import : `create --triage`), un script
-  déterministe déploie enfants+liens, puis elle sort du triage via
-  `kb.specify_triage_task` (appel Python direct, sans LLM ; le CLI
-  `kanban specify` passe par le LLM aux ; `kanban promote` REFUSE le triage).
- Devenue enfant de toutes ses tâches, elle se réveille seule à la fin.
- Corollaire : un worker qui a DÉJÀ livré peut continuer à tourner en rond sans pouvoir
- rendre la main (contexte de 100 k+ tokens, dizaines d'appels API, outils répétés
- `skill_view`/`terminal` sans écriture). Le détecter par les ARTEFACTS, pas par le
- process : comparer les mtime des fichiers produits et le volume de sortie — s'ils ne
- bougent plus, le worker est fini même si la carte dit `running`. Récupération : tuer,
- `kanban reclaim <id>` (la carte repasse `ready` et le dispatcher la respawne), et
- vérifier que le nouveau run PRODUIT vraiment avant de conclure.
-- **Un seul mécanisme de fan-out par board.** L'auto-decompose du dispatcher
-  et un deployer custom visent tous deux les racines triage : sur un même
-  board ils doublonnent le graphe (enfants parasites qui contournent les
-  gates humains). Désactiver l'un des deux ; un deployer custom skippe les
-  racines portant déjà un event `decomposed`. L'auto-decompose est ON par
-  défaut (`kanban.auto_decompose: true`) et **lit la config du profil dont
-  le gateway tient le verrou dispatcher**, pas celle du profil de la carte.
-  Corollaire qui coûte cher : les profils sont des îles, donc poser
-  `auto_decompose: false` dans `~/.hermes/config.yaml` ne couvre QUE le
-  gateway du profil default — si le verrou est tenu par un autre profil, le
-  décomposeur continue de frapper. **Identifier le profil dispatcher AVANT
-  de patcher** : l'event `claimed {'lock': '<host>:<pid>'}` d'une carte donne
-  le PID du gateway qui spawne ; le confronter à `hermes gateway list` donne
-  le profil (le fichier `.dispatcher.lock` peut être vide — ne pas s'y fier).
-  Puis `auto_decompose: false` + `auto_decompose_per_tick: 0` dans le
-  config.yaml de CE profil, et redémarrer son gateway.
-- **Une carte d'un board de pipeline peut être exécutée par un profil
-  étranger, en silence.** Un dispatcher tenu par un autre profil applique SON
-  `kanban.default_assignee` aux cartes triage et aux enfants qu'il
-  auto-décompose : le travail part chez un profil sans lien avec le pipeline,
-  donc sans graphe, **sans gate humain et sans aucune notification**. Un
-  contrat de notification qui dépend du pipeline ayant créé la carte est un
-  contrat troué : la détection doit se faire par lecture du board, pas par
-  confiance dans la provenance. Balayage (assignee/creator, pas l'affichage) :
+  No custom statuses without patching the core — the design is against it. The
+  business "steps" live in the native columns `workflow_template_id` +
+  `current_step_key` (card data, filterable through
+  `kanban list --workflow-template-id/--step-key`). Advancing a step =
+  bookkeeping by the orchestrator on the card, not a status transition.
+- **Two kinds of gate, do not confuse them.** (1) Admission gate = hook
+  `kanban_task_claimed`, BEFORE the worker is spawned. (2) Result gate = AFTER
+  the work: `kanban_request_review` / `kanban_request_changes` (native —
+  "the tests fail, rework your code" is that path, not the claim gate)
+  or a PR completion contract (`--completion-contract`, done refused while the
+  required checks are not green). Reusing the claim gate as an after-the-fact
+  check is impossible: it runs before the work exists.
+- **Link direction = who waits for whom (verified in `kanban_db.py`).** `link
+  <parent> <child>` / `create --parent X`: the CHILD waits for the parent to
+  finish (multiple parents = logical AND; `recompute_ready` keeps the child `todo`
+  while a parent is not done, and the summary of every done parent is injected
+  into the child worker through `_ctx_parent_results`). A "summary/submitted"
+  card that must wait for its sub-tasks is built BACKWARDS: each sub-task is a
+  PARENT of the summary card (decompose pattern: the root is linked under each
+  child and wakes up once the whole graph is done). Never
+  `--parent <summary>` onto one of its own inputs — deadlock (the input waits
+  for the summary to be done, which waits for the inputs to deliver).
+- **An orchestration root card is not a one-shot worker.** A spawned worker
+  cannot "hand back control": `complete` marks it done (closing the upstream
+  ticket/issue too early), `block` is sticky. The root that deploys a graph
+  parks itself in `--triage` (at import: `create --triage`), a deterministic
+  script deploys children+links, then it leaves triage through
+  `kb.specify_triage_task` (a direct Python call, no LLM; the CLI
+  `kanban specify` goes through the auxiliary LLM; `kanban promote` REFUSES triage).
+ Once a child of all its tasks, it wakes up on its own at the end.
+ Corollary: a worker that has ALREADY delivered can keep spinning without being able
+ to hand back control (100 k+ token context, dozens of API calls, repeated
+ `skill_view`/`terminal` tools with no write). Detect it by the ARTEFACTS, not by the
+ process: compare the mtime of the produced files and the output volume — if they no
+ longer move, the worker is finished even though the card says `running`. Recovery: kill,
+ `kanban reclaim <id>` (the card goes back to `ready` and the dispatcher respawns it), and
+ check that the new run really PRODUCES before concluding.
+- **One fan-out mechanism per board.** The dispatcher's auto-decompose
+  and a custom deployer both target triage roots: on the same
+  board they duplicate the graph (parasite children that bypass the
+  human gates). Disable one of the two; a custom deployer skips the
+  roots that already carry a `decomposed` event. Auto-decompose is ON by
+  default (`kanban.auto_decompose: true`) and **reads the config of the profile whose
+  gateway holds the dispatcher lock**, not the card's profile config.
+  An expensive corollary: profiles are islands, so setting
+  `auto_decompose: false` in `~/.hermes/config.yaml` covers ONLY the
+  default profile's gateway — if the lock is held by another profile, the
+  decomposer keeps firing. **Identify the dispatcher profile BEFORE
+  patching**: a card's `claimed {'lock': '<host>:<pid>'}` event gives
+  the PID of the gateway that spawns; comparing it with `hermes gateway list`
+  gives the profile (the `.dispatcher.lock` file can be empty — do not trust it).
+  Then `auto_decompose: false` + `auto_decompose_per_tick: 0` in
+  THAT profile's config.yaml, and restart its gateway.
+- **A card on a pipeline board can be run by a foreign profile,
+  silently.** A dispatcher held by another profile applies ITS
+  `kanban.default_assignee` to triage cards and to the children it
+  auto-decomposes: the work leaves for a profile unrelated to the pipeline,
+  hence with no graph, **no human gate and no notification at all**. A
+  notification contract that relies on the pipeline having created the card is
+  a contract with a hole: detection must come from reading the board, not from
+  trusting the provenance. Sweep (assignee/creator, not the display):
   `sqlite3 <board>/kanban.db "SELECT id,status,assignee,created_by FROM tasks
-  WHERE assignee='<profil-étranger>' OR created_by LIKE '%decompos%';"`.
-- **Arrêter un acteur hors pipeline : tuer PUIS neutraliser, et relire le
-  board.** `kill` seul laisse la carte `running` avec un claim : le dispatcher
-  la respawn au tick suivant. Enchaîner : (1) tuer les workers du profil
-  (`ps -eo pid,args | grep 'hermes.*-p <profil>.*chat -q'`), vérifier 0
-  restant. **Un worker tué reste visible en zombie** (`Zs [hermes] <defunct>`) :
-  `ps -p <pid>` le compte comme VIVANT et fait croire à un process actif. Filtrer
-  `grep -v defunct` (ou lire la colonne STAT) avant de conclure. Un zombie qui traîne
-  n'exécute plus rien mais garde son claim : la libération se fait par
-  `kanban reclaim <id>`, pas en re-tuant ; (2) neutraliser chaque carte. `kanban block` **est refusé selon le
-  statut de départ** (constaté depuis `todo` — « cannot block ») ; `reassign`
-  fonctionne même depuis `todo` mais rend la carte spawnable par le nouveau
-  profil : si l'arrêt doit être définitif, archiver. (3) Relire le board et
-  confirmer qu'aucune carte n'est `ready`/`running` sur le profil visé — une
-  carte neutralisée « à l'affichage » peut rester engageable.
-- **Le format d'une carte se vérifie mécaniquement, pas par prompt.** Une
-  consigne de format dans le SOUL dérive (workers one-shot, respawns). Le
-  contrat (sections obligatoires, scénarios BDD, DoR/DoD, garde-fous,
-  hors-scope, dimensionnement INVEST/Small) doit être couvert par un LINTER
-  déterministe 0-LLM appelé avant le gate humain, avec exit code — c'est lui
-  qui rend l'exigence opposable. Le linter exclut les cartes de PROCESS
-  (étapes de pipeline, racine importée dont le body est la source amont) et
-  les cartes done/archivées, sinon il produit des faux positifs en masse.
-  Le brief de format doit aussi être injecté dans les bodies que le deployer
-  crée, sinon seules les cartes dérivées l'héritent.
-- **Un gate déterministe ne vaut que par son PÉRIMÈTRE, et un périmètre trop
-  large tue le gate.** Un linter (format de carte, vault documentaire,
-  couverture) qui scanne tout le dépôt signale le contenu PRÉEXISTANT — des
-  dizaines de fichiers antérieurs à la convention, tous légitimes : le gate
-  devient inutilisable et se fait désactiver au lieu d'être corrigé. Le
-  restreindre à la zone où la convention s'applique (les répertoires du vault,
-  pas tout `docs/` ; les fichiers du diff, pas tout le repo). Corollaire sur
-  les exclusions : elles changent le décompte, donc un test écrit AVANT l'ajout
-  d'une exclusion (`_version.py`, `*.d.ts`, configs, arbo de tests) échoue
-  après coup — c'est le test qui est obsolète, pas l'implémentation.
-- **Un contrôle qui filtre par motif doit filtrer en GÉNÉRAL, pas en liste
-  fermée.** Un linter qui exclut les étapes de pipeline par énumération
-  (`^t[1-6]\b`) transforme toute étape ajoutée ensuite (`t3b`, `t4a`) en faux
-  positif en masse — précisément au moment où l'on ajoute une étape, donc où
-  l'on lance le linter. Écrire le motif général (`^t\d+[a-z]?\b`).
-- **Éprouver un gate dans les DEUX sens : muet sur une entrée saine ET rouge
-  sur une entrée fautive.** Un gate seulement vert ne prouve rien (rapport
-  absent, scope ignoré, exclusion trop large) ; un gate seulement rouge détruit
-  la confiance. Construire une entrée volontairement fautive et vérifier
-  l'exit 1 fait partie de la livraison du gate, pas d'un test de confort.
-- **Un gate humain en bouton ne peut pas dépendre d'un schéma de custom_id
-  que l'émetteur ne connaît pas.** Quand le worker émet le bouton via un
-  helper générique et que le listener vit dans un plugin écrit pour un autre
-  schéma, les clics sont inertes et le client affiche « didn't respond in
-  time » (l'ACK n'arrive jamais). Règle : le listener doit `defer()` l'ACK
-  IMMÉDIATEMENT (avant toute résolution), accepter les schémas émis par les
-  helpers en place, et résoudre la carte cible côté serveur (par le contexte
-  du thread/message) plutôt que d'exiger un payload que l'émetteur ignore.
-  L'API de bot ne permet pas de simuler un clic : tester le handler sur le
-  board réel (mock de l'adaptateur, kanban réel), pas en espérant un clic.
-- **Ajouter un profil spécialiste à un pipeline = élargir le garde-fou
-  d'admission AVANT de créer la moindre carte pour lui.** Un garde-fou de board
-  (liste blanche d'assignees) refuse tout assignee inconnu : les nouvelles cartes
-  sont bloquées avant leur spawn, en silence — le garde fait exactement son
-  travail, rien ne signale l'erreur. Ordre obligatoire : (1) élargir la liste
-  blanche à la source, (2) recopier la version DÉPLOYÉE que les hooks appellent
-  réellement (un garde vit souvent en deux exemplaires : le repo + une copie dans
-  le scripts/ du profil), (3) redémarrer le gateway qui détient le dispatcher,
-  (4) tester l'admission sur un board réel : une carte par profil autorisé ET une
-  par profil interdit, exécuter le hook à la main, vérifier ready vs blocked,
-  archiver les cartes de test. Tant que (2)+(3) ne sont pas faits, le test passe
-  et le pipeline bloque quand même.
-- **Parallélisme et convergence : le builtin `kanban swarm` donne la topologie.**
-  `hermes kanban swarm --worker PROFIL:TITRE --verifier P --synthesizer P` écrit
-  un graphe root → workers parallèles → verifier (parents = tous les workers) →
-  synthesizer (parent = verifier). Le « blackboard » partagé est un commentaire
-  JSON structuré sur la carte racine (`[swarm:blackboard]`), donc la coordination
-  vit dans les tables natives (comments/events) — aucun service ni scheduler en
-  plus. Pour une **boucle de convergence** (peer programming : deux rôles en
-  parallèle puis réconciliation), la primitive est la lane review native :
-  `kanban request-review [--reviewer <profil>]` passe la carte en `review`
-  (dispatché si `kanban.review_dispatch`, défaut ON) ; `kanban request-changes
-  <id> <raison>` la RENVOIE à l'implémenteur (review → todo, gating parents
-  réappliqué) — c'est le « non, reprends » du cycle, pas un statut à inventer.
-  Plafonds de parallélisme : `kanban.max_in_progress` (global) et
-  `kanban.max_in_progress_per_profile` (sinon N boards multiplient le budget).
-- **Deux cartes partagent un worktree par IDENTITÉ DE BRANCHE, pas par chemin.**
-  Vérifié dans `kanban_db_workspace.py` : le resolver fait
-  `if actual_branch == branch_name: return <chemin>, branche` — donc deux cartes
-  qui déclarent le MÊME `--branch` réutilisent le même worktree, alors qu'une
-  branche DIFFÉRENTE le fait retomber **silencieusement** sur un worktree propre à
-  la carte (`<repo>/.worktrees/<task-id>`, branche `wt/<task-id>`) sans aucun
-  avertissement : le peer programming devient du travail isolé et les cartes ne
-  partagent plus rien. Règle : **une branche par ISSUE**
-  (`wt/issue-<n>-<slug>`, jamais dérivée de l'id de carte), déclarée une fois dans
-  le manifeste de graphe et répétée sur TOUTES les cartes de la slice ; vérifier
-  après déploiement que deux cartes sœurs ont le même `workspace_path` ET le même
-  `branch_name` (`kanban show <id> --json`) et qu'un seul worktree existe côté git
-  (`git worktree list | grep -c`). Conséquence de conception : un seul worktree par
-  issue ⇒ les slices qui se recouvrent sont SÉQUENTIELLES — le parallélisme réel
-  n'existe qu'entre slices aux composants disjoints.
-- **La couverture se mesure sur le périmètre de la carte, pas sur tout le repo.**
-  Un seuil global par fichier (ex. vitest `thresholds.perFile`) échoue sur du code
-  que la carte n'a pas touché : le worker se retrouve bloqué pour un travail qui
-  n'est pas le sien. Le gate d'une carte se scope à SES fichiers (liste du diff
-  `git diff --name-only <base>...HEAD` croisée avec le rapport de couverture) ;
-  garder en plus un seuil global comme garde-fou anti-régression, mais il ne
-  conditionne pas la carte. Et les **cas limites sont des tests de première
-  classe** au même titre que le nominal : nominal + limite + erreur, sinon la
-  spec est incomplète (pas « plus petite »).
-- **Ne JAMAIS retaper un secret lu dans un fichier de config.** Les outils de
-  lecture masquent les clés (`sk-…`) : la valeur affichée n'est pas la valeur réelle,
-  et la recopier « en la complétant » produit un 401 (`token_not_found_in_db`)
-  découvert seulement au premier vrai run. Un nouveau profil copie donc la config
-  du profil source par PROGRAMME (lire le YAML, écrire le YAML — la clé traverse sans
-  être affichée), jamais par réécriture manuelle.
-- **Un profil neuf n'hérite de rien : dupliquer la config du profile source.**
-  Le provider doit être réécrit avec ses DEUX clés (`model.default` ET
-  `providers.<nom>.default_model`) — sinon `hermes profile list` et le picker gardent
-  l'ancien modèle. Les secrets d'un profil vivent dans SON `.env` (copier les clés de
-  service nécessaires, ex. mémoire) ; les variables de plateforme (token de bot)
-  ne se copient PAS — un token n'appartient qu'à un profil à la fois.
-- **Vérifier une affirmation AVANT de l'écrire dans un plan ou une spec.** Un
-  plan destiné à un implémenteur sans contexte propage toute erreur : chaque
-  chemin, comptage et nom de clé cité doit être relu à la source au moment de
-  l'écrire (les chiffres dérivent : un `.env` de profil, un regex de linter, une
-  version épinglée dans un lock). Même règle pour un plan qui cite un
-  comportement de l'environnement : le lire dans le code, pas de mémoire.
-- **`~` peut pointer ailleurs que le HOME attendu.** Certaines commandes tournent
-  dans un contexte dont `$HOME` diffère (session sandboxifiée) : `ls ~/.hermes/...`
-  renvoie « no such file » alors que le pipeline est intact. Avant de conclure à
-  une disparition, vérifier `echo "HOME=$HOME user=$(whoami)"` et `pwd` ; utiliser
-  des chemins absolus (`/home/<user>/.hermes/...`) dans les scripts et vérifications.
-  Un répertoire « disparu » est presque toujours un changement de contexte, pas une
-  suppression.
-- **Mémoire par projet ≠ banque par profil (exigence user).**
-  `bank_id_template` `{workspace}` rend une constante ("hermes", forcée dans
-  agent_init.py) et les tools hindsight_* n'ont pas de paramètre bank :
-  l'isolation par projet d'un pipeline multi-profils = banque partagée + tags
-  `project:<slug>` obligatoires sur chaque retain (le recall reste au niveau
-  banque ; le filtrage par tags passe par l'API REST memories/list, pas par le
-  tool). La mémoire d'un pipeline ne doit jamais dépendre du profil qui
-  tourne — elle vit par projet.
-- **Worktree cross-profil : éviter `--project`.** Il résout le repo via le
-  projects.db du HOME du profil — un worker spawné sous un autre profil ne le
-  voit pas. Ancrer explicitement : `--workspace worktree:<chemin-absolu-repo>`
-  ou `hermes kanban boards set-default-workdir <slug> <chemin>` (anchor par
-  board, lisible par tous les profils ; la base = upstream tip du checkout
-  anchor → cloner l'anchor SUR la branche de base voulue, ex. dev).
-- **Le verrou dispatcher (`.dispatcher.lock`) est par machine, pas par
-  profil.** Au (re)démarrage des gateways il peut basculer vers un autre —
-  l'event `claimed {'lock': ...}` dit qui spawne réellement. L'auto-assign
-  `kanban.default_assignee` du PROFIL DISPATCHER peut écraser l'assignee d'une
-  carte importée : vérifier l'assignee de la racine après déploiement et
-  `kanban reassign` si besoin (une carte assignée au mauvais profil est
-  exécutée par ce profil quand elle devient ready).
-- **Coût : les ticks ne consomment rien, le coût est par issue.** Crons
-  `--no-agent`, dispatcher kanban et plugins à handlers déterministes
-  n'appellent jamais le LLM (tick muet = 0 appel) ; le coût se concentre dans
-  les runs workers (~7-10 par issue traitée, cache prompt ≥90 % observé) et
-  l'aux LLM du decompose. Un pipeline au repos coûte zéro.
-- **Un token Discord n'appartient qu'à un profil à la fois.** Déplacer un bot
-  vers un autre profil = arrêter le gateway de l'ANCIEN profil avant de poser
-  le token dans le nouveau .env — deux profils vivants avec le même token
-  refusent le démarrage du gateway (duplicate credential). Les listeners
-  `on_interaction` (boutons) vivent sur le gateway qui porte le token : après
-  un déménagement, réinstaller le plugin sur le nouveau profil, sinon les
-  clics sont inertes (fallback : texte « go » dans le thread ou CLI unblock).
+  WHERE assignee='<foreign-profile>' OR created_by LIKE '%decompos%';"`.
+- **Stopping an actor outside the pipeline: kill THEN neutralise, and re-read the
+  board.** `kill` alone leaves the card `running` with a claim: the dispatcher
+  respawns it on the next tick. Chain: (1) kill the profile's workers
+  (`ps -eo pid,args | grep 'hermes.*-p <profile>.*chat -q'`), check 0
+  remaining. **A killed worker stays visible as a zombie** (`Zs [hermes] <defunct>`):
+  `ps -p <pid>` counts it as ALIVE and makes you believe a process is active. Filter
+  `grep -v defunct` (or read the STAT column) before concluding. A zombie that lingers
+  runs nothing any more but keeps its claim: release it with
+  `kanban reclaim <id>`, not by killing again; (2) neutralise each card. `kanban block` **is refused depending on the
+  starting status** (observed from `todo` — "cannot block"); `reassign`
+  works even from `todo` but makes the card spawnable by the new
+  profile: if the stop must be final, archive. (3) Re-read the board and
+  confirm that no card is `ready`/`running` on the target profile — a
+  card neutralised "in the display" can stay engageable.
+- **A card's format is checked mechanically, not by prompt.** A
+  format instruction in the SOUL drifts (one-shot workers, respawns). The
+  contract (mandatory sections, BDD scenarios, DoR/DoD, guardrails,
+  out-of-scope, INVEST/Small sizing) must be covered by a deterministic
+  0-LLM LINTER called before the human gate, with an exit code — that is what
+  makes the requirement enforceable. The linter excludes PROCESS cards
+  (pipeline steps, an imported root whose body is the upstream source) and
+  done/archived cards, otherwise it produces false positives in bulk.
+  The format brief must also be injected into the bodies the deployer
+  creates, otherwise only the derived cards inherit it.
+- **A deterministic gate is worth only its PERIMETER, and too wide a perimeter
+  kills the gate.** A linter (card format, documentation vault,
+  coverage) that scans the whole repository reports PRE-EXISTING content —
+  dozens of files predating the convention, all legitimate: the gate
+  becomes unusable and gets disabled instead of fixed. Restrict it
+  to the zone where the convention applies (the vault directories,
+  not all of `docs/`; the files of the diff, not the whole repo). Corollary on
+  exclusions: they change the count, so a test written BEFORE an exclusion
+  was added (`_version.py`, `*.d.ts`, configs, test tree) fails
+  afterwards — it is the test that is obsolete, not the implementation.
+- **A control that filters by pattern must filter GENERALLY, not with a closed
+  list.** A linter that excludes pipeline steps by enumeration
+  (`^t[1-6]\b`) turns any step added later (`t3b`, `t4a`) into false
+  positives in bulk — precisely when a step is added, hence when
+  the linter is run. Write the general pattern (`^t\d+[a-z]?\b`).
+- **Prove a gate in BOTH directions: silent on a healthy input AND red
+  on a faulty input.** A gate that is only green proves nothing (missing
+  report, ignored scope, exclusion too wide); a gate that is only red destroys
+  trust. Building a deliberately faulty input and checking
+  exit 1 is part of the gate's delivery, not a comfort test.
+- **A human gate as a button cannot depend on a custom_id scheme
+  the emitter does not know.** When the worker emits the button through a
+  generic helper and the listener lives in a plugin written for another
+  scheme, the clicks are inert and the client shows "didn't respond in
+  time" (the ACK never arrives). Rule: the listener must `defer()` the ACK
+  IMMEDIATELY (before any resolution), accept the schemes emitted by the
+  helpers in place, and resolve the target card server-side (from the context
+  of the thread/message) instead of demanding a payload the emitter ignores.
+  The bot API cannot simulate a click: test the handler on the
+  real board (mock of the adapter, real kanban), not by hoping for a click.
+- **Adding a specialist profile to a pipeline = widening the admission
+  guardrail BEFORE creating a single card for it.** A board guardrail
+  (assignee allow-list) refuses any unknown assignee: the new cards
+  are blocked before their spawn, silently — the guard does exactly its
+  job, nothing reports the error. Mandatory order: (1) widen the allow-list
+  at the source, (2) copy over the DEPLOYED version the hooks really
+  call (a guard often lives in two copies: the repo + a copy in
+  the profile's scripts/), (3) restart the gateway holding the dispatcher,
+  (4) test admission on a real board: one card per allowed profile AND one
+  per forbidden profile, run the hook by hand, check ready vs blocked,
+  archive the test cards. As long as (2)+(3) are not done, the test passes
+  and the pipeline blocks anyway.
+- **Parallelism and convergence: the builtin `kanban swarm` gives the topology.**
+  `hermes kanban swarm --worker PROFILE:TITLE --verifier P --synthesizer P` writes
+  a graph root → parallel workers → verifier (parents = all the workers) →
+  synthesizer (parent = verifier). The shared "blackboard" is a structured
+  JSON comment on the root card (`[swarm:blackboard]`), so the coordination
+  lives in the native tables (comments/events) — no extra service or scheduler.
+  For a **convergence loop** (peer programming: two roles in
+  parallel then reconciliation), the primitive is the native review lane:
+  `kanban request-review [--reviewer <profile>]` moves the card to `review`
+  (dispatched if `kanban.review_dispatch`, default ON); `kanban request-changes
+  <id> <reason>` SENDS it BACK to the implementer (review → todo, parent gating
+  reapplied) — that is the "no, rework it" of the cycle, not a status to invent.
+  Parallelism caps: `kanban.max_in_progress` (global) and
+  `kanban.max_in_progress_per_profile` (otherwise N boards multiply the budget).
+- **Two cards share a worktree by BRANCH IDENTITY, not by path.**
+  Verified in `kanban_db_workspace.py`: the resolver does
+  `if actual_branch == branch_name: return <path>, branch` — so two cards
+  declaring the SAME `--branch` reuse the same worktree, while a
+  DIFFERENT branch makes it fall back **silently** to a worktree private to
+  the card (`<repo>/.worktrees/<task-id>`, branch `wt/<task-id>`) with no
+  warning at all: peer programming becomes isolated work and the cards no
+  longer share anything. Rule: **one branch per ISSUE**
+  (`wt/issue-<n>-<slug>`, never derived from the card id), declared once in
+  the graph manifest and repeated on ALL the cards of the slice; after
+  deployment, check that two sibling cards have the same `workspace_path` AND the same
+  `branch_name` (`kanban show <id> --json`) and that a single worktree exists on the git
+  side (`git worktree list | grep -c`). Design consequence: a single worktree per
+  issue ⇒ slices that overlap are SEQUENTIAL — real parallelism
+  exists only between slices with disjoint components.
+- **Coverage is measured on the card's perimeter, not on the whole repo.**
+  A global per-file threshold (e.g. vitest `thresholds.perFile`) fails on code
+  the card did not touch: the worker ends up blocked for work that
+  is not its own. A card's gate scopes to ITS files (the diff list
+  `git diff --name-only <base>...HEAD` crossed with the coverage report);
+  keep a global threshold as an extra anti-regression guardrail, but it does not
+  condition the card. And **limit cases are first-class
+  tests** just like the nominal one: nominal + limit + error, otherwise the
+  spec is incomplete (not "smaller").
+- **NEVER retype a secret read from a config file.** The reading
+  tools mask the keys (`sk-…`): the displayed value is not the real value,
+  and copying it "while filling it in" produces a 401 (`token_not_found_in_db`)
+  discovered only at the first real run. A new profile therefore copies the config
+  of the source profile by PROGRAM (read the YAML, write the YAML — the key crosses
+  without being displayed), never by manual rewriting.
+- **A brand-new profile inherits nothing: duplicate the source profile's config.**
+  The provider must be rewritten with its TWO keys (`model.default` AND
+  `providers.<name>.default_model`) — otherwise `hermes profile list` and the picker keep
+  the old model. A profile's secrets live in ITS `.env` (copy the required service
+  keys, e.g. memory); platform variables (bot token)
+  are NOT copied — a token belongs to one profile at a time.
+- **Verify a claim BEFORE writing it into a plan or a spec.** A
+  plan meant for an implementer without context propagates every error: each
+  path, count and key name cited must be re-read at the source when it is
+  written (figures drift: a profile `.env`, a linter regex, a
+  version pinned in a lock). Same rule for a plan that cites an
+  environment behaviour: read it in the code, not from memory.
+- **`~` can point somewhere other than the expected HOME.** Some commands run
+  in a context whose `$HOME` differs (sandboxed session): `ls ~/.hermes/...`
+  returns "no such file" while the pipeline is intact. Before concluding that
+  something disappeared, check `echo "HOME=$HOME user=$(whoami)"` and `pwd`; use
+  absolute paths (`/home/<user>/.hermes/...`) in scripts and checks.
+  A "vanished" directory is almost always a change of context, not a
+  deletion.
+- **Memory per project ≠ bank per profile (user requirement).**
+  `bank_id_template` `{workspace}` yields a constant ("hermes", forced in
+  agent_init.py) and the hindsight_* tools have no bank parameter:
+  per-project isolation of a multi-profile pipeline = shared bank + tags
+  `project:<slug>` mandatory on every retain (recall stays at the bank
+  level; tag filtering goes through the REST API memories/list, not through the
+  tool). A pipeline's memory must never depend on the profile that is
+  running — it lives per project.
+- **Cross-profile worktree: avoid `--project`.** It resolves the repo through the
+  profile HOME's projects.db — a worker spawned under another profile does not
+  see it. Anchor explicitly: `--workspace worktree:<absolute-repo-path>`
+  or `hermes kanban boards set-default-workdir <slug> <path>` (per-board
+  anchor, readable by every profile; the base = upstream tip of the anchor
+  checkout → clone the anchor ON the wanted base branch, e.g. dev).
+- **The dispatcher lock (`.dispatcher.lock`) is per machine, not per
+  profile.** On a gateway (re)start it can switch to another one —
+  the `claimed {'lock': ...}` event says who really spawns. The auto-assign
+  `kanban.default_assignee` of the DISPATCHER PROFILE can overwrite the assignee of an
+  imported card: check the root's assignee after deployment and
+  `kanban reassign` if needed (a card assigned to the wrong profile is
+  run by that profile when it becomes ready).
+- **Cost: ticks consume nothing, the cost is per issue.** Crons
+  `--no-agent`, the kanban dispatcher and plugins with deterministic handlers
+  never call the LLM (silent tick = 0 call); the cost concentrates in the
+  worker runs (~7-10 per issue processed, prompt cache ≥90 % observed) and
+  the decompose auxiliary LLM. A pipeline at rest costs zero.
+- **A Discord token belongs to one profile at a time.** Moving a bot
+  to another profile = stop the OLD profile's gateway before putting
+  the token in the new .env — two live profiles with the same token
+  refuse to start the gateway (duplicate credential). The listeners
+  `on_interaction` (buttons) live on the gateway carrying the token: after
+  a move, reinstall the plugin on the new profile, otherwise the
+  clicks are inert (fallback: a "go" text in the thread or CLI unblock).
 
-## Recette : pattern scrum orchestrateur
+## Recipe: scrum orchestrator pattern
 
-1. **Entrée** : carte assignée au profil scrum (dispatcher spawn) OU discussion
-   Discord (cron/webhook du profil scrum surveille — le board n'ouvre rien
-   tout seul : `kanban_create` + `assignee` engagent un worker).
-2. **Grooming** : ≤3 questions à la fois en `kanban_comment` + `kanban_block` ;
-   l'humain répond puis `unblock` ; au respawn le worker relit TOUT le fil.
-   Alternative conversationnelle : room/DM + `@user` (escalade).
-3. **Split** : `kanban_create` enfants (un par domaine) + `kanban_link
-   parent→enfant`, assignee = profil spécialiste. Même board + liens
-   (recommandé : promotion auto + graphe de dépendances visible) ; board
-   séparé seulement pour isoler réellement un domaine.
-4. **Cascade** : done du parent → enfants `todo→ready` au PROCHAIN tick du
-   dispatcher. Accélérer : hook sur les events kanban ou `hermes kanban
-   dispatch` manuel. Un worker peut créer des sous-enfants (profondeur libre —
-   pas de max_spawn_depth côté kanban).
-5. **Itération/consolidation** : avis rapide DANS un run = `delegate_task`
-   (éphémère) ; avis durable = carte. Critère de stabilisation écrit dans le
-   SOUL/prompt de l'orchestrateur ; consolidation = `kanban_complete
-   (artifacts=[...])` — copiés en stockage durable avant nettoyage du scratch.
+1. **Input**: a card assigned to the scrum profile (dispatcher spawn) OR a Discord
+   discussion (a cron/webhook of the scrum profile watches — the board opens
+   nothing by itself: `kanban_create` + `assignee` engage a worker).
+2. **Grooming**: ≤3 questions at a time in `kanban_comment` + `kanban_block`;
+   the human answers then `unblock`; on respawn the worker re-reads the WHOLE thread.
+   Conversational alternative: room/DM + `@user` (escalation).
+3. **Split**: `kanban_create` children (one per domain) + `kanban_link
+   parent→child`, assignee = specialist profile. Same board + links
+   (recommended: auto promotion + visible dependency graph); a separate
+   board only to really isolate a domain.
+4. **Cascade**: parent done → children `todo→ready` on the NEXT dispatcher
+   tick. To speed up: a hook on kanban events or a manual `hermes kanban
+   dispatch`. A worker can create sub-children (free depth —
+   no max_spawn_depth on the kanban side).
+5. **Iteration/consolidation**: a quick opinion WITHIN a run = `delegate_task`
+   (ephemeral); a durable opinion = a card. Stabilisation criterion written in
+   the orchestrator's SOUL/prompt; consolidation = `kanban_complete
+   (artifacts=[...])` — copied to durable storage before the scratch is cleaned.
 
-## Pièges
+## Pitfalls
 
-- **`default_assignee` vide = le profil du DISPATCHER devient l'assignee.**
-  Vérifié dans la source : `kanban_decompose._resolve_profile_from_cfg` retombe sur
-  `get_active_profile_name()` quand `kanban.default_assignee`/`orchestrator_profile`
-  sont vides — donc le profil qui EXÉCUTE le dispatcher (gateway embarqué) s'attribue
-  les cartes. Symptôme vécu : cartes « créées par auto-decomposer » assignées à un
-  profil métier sans rapport (example-local) sur un board dédié à un autre pipeline.
-  Fix : poser `kanban.default_assignee` + `kanban.orchestrator_profile` dans le profil
-  QUI DÉTIENT LE DISPATCHER (pas seulement dans le profil du pipeline), et
-  `kanban.auto_decompose: false` (défaut = True). Vérifier le log gateway :
-  `kanban dispatcher: default_assignee='<profil>'`.
-- **Garde-fou d'admission (isolation de board).** Quand un board doit être réservé à
-  une liste d'assignees, la config ne suffit pas (elle se re-perd : autre gateway,
-  config recréée). Script de garde branché sur DEUX hooks :
-  `on_kanban_dispatch_tick` (tire APRÈS relâchement du `_dispatch_tick_lock` → peut
-  bloquer sans deadlock, et la carte n'est pas claimée au tick suivant) +
-  `kanban_task_claimed` (tire après le claim, donc AVANT le spawn mais SANS pouvoir
-  annuler le claim courant : signaler seulement). Ne jamais tenter un `kanban block`
-  bloquant depuis `kanban_task_claimed` en croyant annuler le spawn — il a déjà eu lieu.
-- **Nettoyer sans perte : prouver que le travail est déjà ailleurs avant de
-  supprimer.** Avant de supprimer worktrees/branches qu'on croit obsolètes,
-  vérifier pour chacun que la branche est DÉJÀ dans la base (ancêtre —
-  `git merge-base --is-ancestor origin/<wt> origin/dev`) ET que l'arbre est propre
-  (`git status --porcelain`). Un worktree « terminé » peut porter des commits non
-  poussés. Après MERGE humain, la branche distante survit au cleanup kanban :
-  `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<branche>`.
-- **Casser les liens AVANT d'archiver des cartes parasites.** L'auto-decompose
-  chaîne ses enfants comme PARENTS de la racine importée : archiver l'enfant ne
-  délie pas la racine, qui reste `todo` en attente d'un parent archivé — elle ne
-  se réveillera jamais. Ordre : `kanban unlink <parasite> <racine>` (et entre
-  parasites), puis archiver les parasites, puis remettre la racine dans son état
-  de départ pour repasser par le pipeline. La seule transition retour vers
-  `triage` est un UPDATE direct en base (`kanban promote`/`specify` ne font pas
-  triage ← todo) — c'est acceptable pour une remise en état, à documenter sur la
-  carte par un commentaire.
-- Déclarer tout nouveau type de carte DANS le gate d'admission avant de
-  créer — sinon un crash rate-limit 429 se déclare en `protocol_violation` et
-  bloque faussement le pipeline (le gate refuse, pas le travail).
-- Les workers ne se spawnent pas entre eux : "l'architecte délègue" = il crée
-  des cartes liées et le DISPATCHER spawn. Le flux de données passe par le
-  board (comments/attachments), jamais par la mémoire du parent — c'est ce qui
-  rend la cascade durable et crash-safe.
-- Changer le modèle d'un profil ne corrige ni les runs en vol ni les cartes
-  portant un `workflow_template_id` (modèle forcé par étape par le moteur
-  custom) : patcher aussi les YAML et redispatcher les cartes non terminées.
-- Les hooks kanban sont des observers : exit code ignoré, l'influence voyage
-  par les commentaires/cartes.
+- **An empty `default_assignee` = the DISPATCHER profile becomes the assignee.**
+  Verified in the source: `kanban_decompose._resolve_profile_from_cfg` falls back to
+  `get_active_profile_name()` when `kanban.default_assignee`/`orchestrator_profile`
+  are empty — so the profile that RUNS the dispatcher (embedded gateway) assigns itself
+  the cards. Symptom experienced: cards "created by auto-decomposer" assigned to an
+  unrelated business profile (example-local) on a board dedicated to another pipeline.
+  Fix: set `kanban.default_assignee` + `kanban.orchestrator_profile` in the profile
+  THAT HOLDS THE DISPATCHER (not only in the pipeline's profile), and
+  `kanban.auto_decompose: false` (default = True). Check the gateway log:
+  `kanban dispatcher: default_assignee='<profile>'`.
+- **Admission guardrail (board isolation).** When a board must be reserved for
+  a list of assignees, the config is not enough (it gets lost again: another gateway,
+  config recreated). A guard script wired on TWO hooks:
+  `on_kanban_dispatch_tick` (fires AFTER the `_dispatch_tick_lock` is released → it can
+  block without deadlock, and the card is not claimed on the next tick) +
+  `kanban_task_claimed` (fires after the claim, hence BEFORE the spawn but WITHOUT being
+  able to cancel the current claim: report only). Never attempt a blocking `kanban block`
+  from `kanban_task_claimed` believing you are cancelling the spawn — it already happened.
+- **Clean without loss: prove the work is already elsewhere before
+  deleting.** Before deleting worktrees/branches believed obsolete,
+  check for each one that the branch is ALREADY in the base (ancestor —
+  `git merge-base --is-ancestor origin/<wt> origin/dev`) AND that the tree is clean
+  (`git status --porcelain`). A "finished" worktree can carry unpushed
+  commits. After a human MERGE, the remote branch survives the kanban cleanup:
+  `gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<branch>`.
+- **Break the links BEFORE archiving parasite cards.** Auto-decompose
+  chains its children as PARENTS of the imported root: archiving the child does not
+  unlink the root, which stays `todo` waiting for an archived parent — it will
+  never wake up. Order: `kanban unlink <parasite> <root>` (and between
+  parasites), then archive the parasites, then put the root back in its
+  starting state to go through the pipeline again. The only transition back to
+  `triage` is a direct UPDATE in the database (`kanban promote`/`specify` do not do
+  triage ← todo) — acceptable for a repair, to be documented on the
+  card with a comment.
+- Declare any new card type IN the admission gate before
+  creating it — otherwise a 429 rate-limit crash is declared as `protocol_violation` and
+  falsely blocks the pipeline (the gate refuses, not the work).
+- Workers do not spawn each other: "the architect delegates" = it creates
+  linked cards and the DISPATCHER spawns. The data flow goes through the
+  board (comments/attachments), never through the parent's memory — that is what
+  makes the cascade durable and crash-safe.
+- Changing a profile's model fixes neither the runs in flight nor the cards
+  carrying a `workflow_template_id` (model forced per step by the custom
+  engine): patch the YAML too and redispatch the unfinished cards.
+- Kanban hooks are observers: exit code ignored, the influence travels
+  through comments/cards.
 
-## Cycle de vie d'une room (exploitation)
+## Room lifecycle (operations)
 
-- **Cycle de vie d'une room = 4 états + un marqueur sur la carte.** Le moteur ne connaît
-  aucun lien vers une carte : le lien room↔ticket se porte par un marqueur `ROOM: <room_id>`
-  dans le body de la carte (posé à la création — `kanban edit` refuse les cartes actives,
-  donc migration en base pour l'existant). Cycle : `ensure` (création) → `ask` (animation) →
-  `report` (transcript → `kanban_comment`) → `disband`. L'état se lit par les events :
-  une discussion est FINIE quand un event `room.activity` porte `status` ∈ {settled, bounded}
-  pour son `discussion_event_id` (`bounded` = plafond 3 rounds / 10 messages atteint).
-- **Règles de sûreté du cycle (sinon on perd du travail ou on sature).** (1) `ask`
-  uniquement si la room est VIDE (users=0) et la carte active — ré-animer une délibération
-  en cours la ferait repartir de zéro. (2) `disband` uniquement après `report` : dissoudre
-  une délibération non reportée perd le travail des agents. `pending` (délibération en cours)
-  n'est JAMAIS touché — la reporter à mi-parcours tronquerait le débat. (3) une room VIDE
-  sur une carte finie se dissout directement (rien à préserver) — sinon ces rooms consomment
-  un slot `MAX_ACTIVE_ROOMS` à vie.
-- **Un `room_id` dissous est RETIRÉ DÉFINITIVEMENT** (`hosted_room_retired_ids`,
-  `create_room` lève `RoomConflictError: room_id belongs to a disbanded room`). Ce n'est pas
-  un bug : un id dissous ne doit jamais reprendre un ancien historique. Conséquence : une
-  automatisation de cycle doit traiter cette erreur comme terminale (ignorer la room), jamais
-  réessayer en boucle. Corollaire : ne pas dissoudre à la légère — c'est irréversible.
-- **Un gate/parseur qui cherche un marqueur doit le trouver PARTOUT dans le body.** Un regex
-  ancré `^MARQUEUR: (\S+)$` en MULTILINE rate le cas réel où le marqueur est noyé dans une
-  ligne (carte créée sur une seule ligne) : l'automatisation devient muette sans erreur.
-  Chercher `MARQUEUR:\s*(\S+)` sans ancre — et tester ce cas (régression vécue).
+- **Room lifecycle = 4 states + one marker on the card.** The engine knows
+  no link to a card: the room↔ticket link is carried by a `ROOM: <room_id>` marker
+  in the card body (set at creation — `kanban edit` refuses active cards,
+  hence a database migration for existing ones). Cycle: `ensure` (creation) → `ask` (animation) →
+  `report` (transcript → `kanban_comment`) → `disband`. The state is read from the events:
+  a discussion is FINISHED when a `room.activity` event carries `status` ∈ {settled, bounded}
+  for its `discussion_event_id` (`bounded` = ceiling of 3 rounds / 10 messages reached).
+- **Cycle safety rules (otherwise you lose work or saturate).** (1) `ask`
+  only if the room is EMPTY (users=0) and the card active — re-animating an ongoing
+  deliberation would restart it from scratch. (2) `disband` only after `report`: dissolving
+  an unreported deliberation loses the agents' work. `pending` (deliberation in progress)
+  is NEVER touched — reporting it mid-way would truncate the debate. (3) an EMPTY room
+  on a finished card dissolves directly (nothing to preserve) — otherwise those rooms consume
+  a `MAX_ACTIVE_ROOMS` slot for life.
+- **A dissolved `room_id` is REMOVED FOR GOOD** (`hosted_room_retired_ids`,
+  `create_room` raises `RoomConflictError: room_id belongs to a disbanded room`). That is not
+  a bug: a dissolved id must never resume an old history. Consequence: a cycle
+  automation must treat that error as terminal (ignore the room), never
+  retry in a loop. Corollary: do not dissolve lightly — it is irreversible.
+- **A gate/parser looking for a marker must find it EVERYWHERE in the body.** A regex
+  anchored `^MARKER: (\S+)$` in MULTILINE misses the real case where the marker is buried in a
+  line (card created on a single line): the automation goes silent with no error.
+  Look for `MARKER:\s*(\S+)` without an anchor — and test that case (a regression experienced).
 
-- **Un livelock de room doit être détecté et coupé, sinon la carte meurt avec lui.** La
-  contention multi-gateway produit un état stable-non-progressif : le gateway gagnant du lease
-  marque la tâche `running` d'un autre `indeterminate`, la réconciliation ne peut pas la
-  récupérer et la **diffère** en série (`turn.deferred`, `reason=member_unavailable`), pendant
-  que `plan_next_task` continue de répondre `task/member_turn` — donc le moteur relance
-  indéfiniment et la carte reste `running`. **Signature de détection : ≥2 `turn.deferred`
-  consécutifs avec `reason=member_unavailable` en fin de journal, sans aucun `message.member`
-  entre eux.** Compter les defer CONSÉCUTIFS, pas le total (une longue délibération en compte
-  beaucoup, légitimement) et réinitialiser sur tout `message.member`/`turn.settled` (progrès
-  réel). Un seul defer ne suffit pas à couper (incident transitoire).
-- **La sortie d'un livelock est `request_room_stop` (fence `room.stop_requested`), pas un
+- **A room livelock must be detected and cut, otherwise the card dies with it.** The
+  multi-gateway contention produces a stable non-progressive state: the gateway that wins the lease
+  marks another's task `running` as `indeterminate`, the reconciliation cannot
+  recover it and **defers** it serially (`turn.deferred`, `reason=member_unavailable`), while
+  `plan_next_task` keeps answering `task/member_turn` — so the engine restarts
+  indefinitely and the card stays `running`. **Detection signature: ≥2 consecutive
+  `turn.deferred` with `reason=member_unavailable` at the end of the journal, with no `message.member`
+  between them.** Count CONSECUTIVE defers, not the total (a long deliberation legitimately
+  has many) and reset on any `message.member`/`turn.settled` (real
+  progress). A single defer is not enough to cut (a transient incident).
+- **The way out of a livelock is `request_room_stop` (fence `room.stop_requested`), not a
   kill.** `gateway.hosted_rooms.request_room_stop(db, room_id=…, cancel_id=…,
-  expected_gateway_id=…, expected_epoch=…)` : `_pending_discussion` ignore alors tout
-  `message.user` de seq ≤ au dernier stop, donc la délibération bloquée est réputée close et
-  `plan_next_task` retourne `idle`. Vérifier après coup que le plan est bien `idle` — c'est la
-  seule preuve que le livelock est rompu. Tracer l'arrêt automatique sur la carte
-  (commentaire + marqueur dédié) : un arrêt déclenché par une machine doit rester auditable.
-  Attention : un nouveau `message.user` postérieur relance une délibération — c'est voulu.
-- **Un worker de carte ne peut pas « rendre la main » : il peut vivre en zombie.** Constaté :
-  un worker kanban ayant livré ses artefacts continue ses appels LLM en boucle (80 appels,
-  150 k+ de contexte) et son process apparaît `Zs [hermes] <defunct>` — donc `ps -p <pid>`
-  répond **présent** alors qu'il est mort. Toujours filtrer `grep -v defunct` avant de
-  conclure qu'un worker tourne. Réparer une carte bloquée en `running` : arrêter le process,
-  `kanban reclaim <id>` (libère le claim, la carte repasse `ready` et est respawnée avec tout
-  le contexte des commentaires — dont le report de room).
+  expected_gateway_id=…, expected_epoch=…)`: `_pending_discussion` then ignores every
+  `message.user` with seq ≤ the last stop, so the blocked deliberation is deemed closed and
+  `plan_next_task` returns `idle`. Check afterwards that the plan really is `idle` — that is the
+  only proof the livelock is broken. Trace the automatic stop on the card
+  (comment + dedicated marker): a machine-triggered stop must stay auditable.
+  Careful: a later new `message.user` restarts a deliberation — that is intended.
+- **A card worker cannot "hand back control": it can live on as a zombie.** Observed:
+  a kanban worker that has delivered its artefacts keeps its LLM calls in a loop (80 calls,
+  150 k+ of context) and its process shows up as `Zs [hermes] <defunct>` — so `ps -p <pid>`
+  answers **present** although it is dead. Always filter `grep -v defunct` before
+  concluding that a worker runs. Repair a card stuck in `running`: stop the process,
+  `kanban reclaim <id>` (releases the claim, the card goes back to `ready` and is respawned with all
+  the context of the comments — including the room report).
 
-- **Un pont qui importe « toute issue ouverte » fabrique des graphes en double.** Sans gate
-  de couverture, une demande de modification déposée en NOUVELLE issue repart en graphe neuf
-  complet (t1..t5) alors que la livraison est en vol. Vécu : 3 issues (#4, #9, #10) pour un
-  seul changement, ~776 min d'agent brûlées pour conclure « redondante avec #4 ». Le gate se
-  pose AVANT l'import et combine deux signaux : (1) références `#N` dans le body de l'issue
-  (hors URL, hors nombres nus), (2) recouvrement de titre (Jaccard) contre les issues ayant
-  une PR ouverte ou un graphe. **Le gate ne tranche pas** : il commente l'issue avec les deux
-  issues possibles (rattacher / assumer) et laisse l'humain décider — un blocage silencieux
-  serait pire que le doublon.
-- **Détecter « issue couverte » demande DEUX sources : le lien natif GitHub ET la convention
-  de branche.** `closingIssuesReferences` est vide dès que la PR omet `Closes #N` — vérifié
-  sur une PR réelle du pipeline. Sans le repli sur `feat/issue-<n>` dans `headRefName`, le
-  gate laisse tout passer. Et sans `Closes #N` dans les cartes t6, GitHub ne rattache jamais
-  la PR à l'issue : la fermeture ne dépend plus que du pont, donc toute issue ouverte sur le
-  même sujet repart en graphe neuf.
-- **Le grill-me doit QUALIFIER l'ambiguïté, pas convoquer l'humain.** Deux productions
-  obligatoires : (1) un quadrant par ambiguïté — *levable sans humain ? comment ? **coût si
-  non levée ?*** ; une ambiguïté levable dans le code/la mémoire/la doc se lève seule ; (2) un
-  verdict machine-lisible (`PROTOTYPE:`/`AMBIGU:`/`ARTEFACT:`) repris par les étapes aval.
-  `PROTOTYPE: oui` seulement si ambiguïté non levable sur un livrable **perceptible**, ou
-  périmètre > 3 slices sur un domaine qui « se voit », ou rejet humain antérieur sur le sujet.
-  Sinon `PROTOTYPE: non` — le cas normal. Exiger un prototype à chaque ticket est aussi nocif
-  qu'un tunnel : ça ajoute un gate humain là où il n'y a rien à arbitrer.
-- **Un seuil de « trop de travail avant le premier jugement » doit être MÉCANIQUE.** Quand le
-  livrable est perceptible (visuel/UX/texte lu), l'artefact le moins cher (maquette, planche,
-  capture, schéma) se valide AVANT les slices de production : `prototype_required: true` dans
-  le manifeste de graphe + une slice `preview` en PREMIÈRE position, parente de toutes les
-  autres, refusée par le validateur si absente ou mal placée (`exit 1`). Vécu : ~55 h d'agent
-  et +5 355 lignes produits avant le premier regard humain, jugement négatif.
-- **Ne jamais câbler un exécutable sur un chemin en dur.** `shutil.which(gh) or "/usr/bin/gh"`
-  a produit `FileNotFoundError` (gh vit dans `~/.local/bin`) dans tous les subprocess sans PATH
-  interactif — crons et kernels Python notamment ; le bug ne se voit qu'hors shell de login.
-  Résoudre par `which` puis une liste de candidats vérifiés (`isfile` + `X_OK`), jamais par
-  défaut absolu.
+- **A bridge that imports "every open issue" manufactures duplicate graphs.** With no
+  coverage gate, a change request filed as a NEW issue starts a full new graph
+  (t1..t5) while the delivery is in flight. Experienced: 3 issues (#4, #9, #10) for a
+  single change, ~776 min of agent burned to conclude "redundant with #4". The gate is
+  applied BEFORE the import and combines two signals: (1) `#N` references in the issue body
+  (excluding URLs and bare numbers), (2) title overlap (Jaccard) against the issues having
+  an open PR or a graph. **The gate does not decide**: it comments the issue with the two
+  possible issues (attach / assume) and lets the human decide — a silent block
+  would be worse than the duplicate.
+- **Detecting a "covered issue" needs TWO sources: the native GitHub link AND the branch
+  convention.** `closingIssuesReferences` is empty as soon as the PR omits `Closes #N` — verified
+  on a real pipeline PR. Without the fallback on `feat/issue-<n>` in `headRefName`, the
+  gate lets everything through. And without `Closes #N` in the t6 cards, GitHub never attaches
+  the PR to the issue: closing then depends only on the bridge, so any issue opened on the
+  same subject starts a brand-new graph.
+- **Grill-me must QUALIFY the ambiguity, not summon the human.** Two mandatory
+  outputs: (1) a quadrant per ambiguity — *liftable without a human? how? **cost if
+  not lifted?***; an ambiguity liftable from the code/memory/docs is lifted alone; (2) a
+  machine-readable verdict (`PROTOTYPE:`/`AMBIGU:`/`ARTEFACT:`) picked up by downstream steps.
+  `PROTOTYPE: oui` only if the ambiguity cannot be lifted on a **perceptible** deliverable, or
+  a perimeter > 3 slices on a domain that "shows", or a previous human rejection on the subject.
+  Otherwise `PROTOTYPE: non` — the normal case. Demanding a prototype for every ticket is as harmful
+  as a tunnel: it adds a human gate where there is nothing to arbitrate.
+- **A "too much work before the first judgement" threshold must be MECHANICAL.** When the
+  deliverable is perceptible (visual/UX/read text), the cheapest artefact (mock-up, plate,
+  screenshot, diagram) is validated BEFORE the production slices: `prototype_required: true` in
+  the graph manifest + a `preview` slice in FIRST position, parent of all the
+  others, refused by the validator when absent or misplaced (`exit 1`). Experienced: ~55 h of agent
+  and +5 355 lines produced before the first human look, a negative judgement.
+- **Never wire an executable to a hard-coded path.** `shutil.which(gh) or "/usr/bin/gh"`
+  produced `FileNotFoundError` (gh lives in `~/.local/bin`) in every subprocess without an interactive PATH
+  — crons and Python kernels in particular; the bug only shows outside a login shell.
+  Resolve it with `which` then a list of verified candidates (`isfile` + `X_OK`), never with an
+  absolute default.
 
 ## Room vs board (Bot Mode group chats)
 
-- Room (group chat 2-6 bots) = délibération : @mention déclenche ≤3 rounds ×
-  ≤10 msg/round, un bot peut passer sans répondre, `@user` escalade à l'humain
-  (badge needs-you). Chaque membre garde une session persistante
-  `Group: <name>` ; la room est durable si tous les membres partagent un
+- Room (group chat 2-6 bots) = deliberation: an @mention triggers ≤3 rounds ×
+  ≤10 msg/round, a bot may pass without answering, `@user` escalates to the human
+  (needs-you badge). Each member keeps a persistent session
+  `Group: <name>`; the room is durable if all the members share one
   gateway.
-- **Le moteur de room est dans le GATEWAY, pas dans le desktop — une room se
-  crée et se pilote en ligne de commande.** Le desktop n'est qu'un client : il
-  n'existe aucune sous-commande CLI `hermes groups`, mais tout passe par
-  l'API bas niveau `gateway.hosted_rooms` (voir ci-dessous). Ne pas conclure
-  « hors périmètre » parce que le CLI n'expose rien.
-- **Bornes réelles (lues dans le code, ≠ doc) :** `MAX_ACTIVE_ROOMS=256`
-  (rooms actives par hôte), `validate_roster` impose **2-6 membres**
+- **The room engine lives in the GATEWAY, not in the desktop — a room is
+  created and driven from the command line.** The desktop is only a client:
+  there is no CLI sub-command `hermes groups`, but everything goes through
+  the low-level API `gateway.hosted_rooms` (see below). Do not conclude
+  "out of scope" just because the CLI exposes nothing.
+- **Real bounds (read in the code, ≠ docs):** `MAX_ACTIVE_ROOMS=256`
+  (active rooms per host), `validate_roster` enforces **2-6 members**
   (`MIN/MAX_DISCUSSION_MEMBERS`), `MAX_DISCUSSION_ROUNDS=3`,
-  `MAX_DISCUSSION_MESSAGES=10`, `max_concurrent_rooms=4` (délibérations
-  simultanées). Le « 2-6 » de la doc est donc bien la limite métier, pas une
-  limite d'UI ; les 128 membres du schéma sont une borne bas niveau.
-- **Une room n'est structurellement liée à AUCUNE carte.** La table
-  `hosted_rooms` n'a ni `task_id` ni `issue` (le `task_id` visible ailleurs est
-  un identifiant de TOUR de parole, table `hosted_room_remote_runs`). Le lien
-  room↔ticket est une convention de nommage (`pj-<repo>-issue-<n>`) — donc
-  retrouvable sans table de mapping, mais qu'un renommage casse.
-- **Créer une room depuis un script (API bas niveau) :**
+  `MAX_DISCUSSION_MESSAGES=10`, `max_concurrent_rooms=4` (simultaneous
+  deliberations). The docs' "2-6" is therefore the business limit, not a
+  UI limit; the schema's 128 members are a low-level bound.
+- **A room is structurally tied to NO card.** The
+  `hosted_rooms` table has neither `task_id` nor `issue` (the `task_id` visible elsewhere is
+  a TURN identifier, table `hosted_room_remote_runs`). The
+  room↔ticket link is a naming convention (`pj-<repo>-issue-<n>`) — hence
+  findable without a mapping table, but a rename breaks it.
+- **Creating a room from a script (low-level API):**
 
   ```python
   import sys; sys.path.insert(0, "${HOME}/.hermes/hermes-agent")
@@ -440,19 +440,19 @@ hooks, cron — sans moteur d'orchestration custom.
       authority_gateway_id=hr.local_authority_gateway_id())
   ```
 
-  - Roster : exactement `{member_id, profile, handle}` (+ `display_name`,
-    `target` optionnels) — un champ en trop est refusé (`_exact_fields`). Les
-    profils doivent être **locaux au gateway** (`~/.hermes/profiles/`).
-  - `disband_room(db, room_id=…, expected_gateway_id=…, expected_epoch=…)` :
-    l'epoch est **obligatoire** (tombstone idempotente).
-  - Lecture : `list_rooms(db)` / `room_state(db, room_id=…)` /
-    `read_events(db, room_id=…)`. ⚠️ `read_events` renvoie un **dict** avec la
-    clé `events` (pas une liste) ; `get_room` et `list_events` n'existent pas.
-  - Pas besoin de `wakeup()` : `bindings()` relit la base à chaque cycle
-    (poll 5 s / 0.25 s actif) et la boucle découvre seule la room créée.
-- **Les bots ne parlent JAMAIS spontanément : il faut poster un `message.user`.**
-  `plan_next_task` reste `idle` (« no_pending_user_event ») — une room créée
-  reste muette indéfiniment. Déclencheur (payload EXACT `{text, thread_id}`) :
+  - Roster: exactly `{member_id, profile, handle}` (+ optional `display_name`,
+    `target`) — an extra field is refused (`_exact_fields`). The
+    profiles must be **local to the gateway** (`~/.hermes/profiles/`).
+  - `disband_room(db, room_id=…, expected_gateway_id=…, expected_epoch=…)`:
+    the epoch is **mandatory** (idempotent tombstone).
+  - Reading: `list_rooms(db)` / `room_state(db, room_id=…)` /
+    `read_events(db, room_id=…)`. ⚠️ `read_events` returns a **dict** with the
+    key `events` (not a list); `get_room` and `list_events` do not exist.
+  - No need for `wakeup()`: `bindings()` re-reads the database on every cycle
+    (poll 5 s / 0.25 s active) and the loop discovers the created room on its own.
+- **Bots NEVER speak on their own: a `message.user` has to be posted.**
+  `plan_next_task` stays `idle` ("no_pending_user_event") — a created room
+  stays mute indefinitely. Trigger (EXACT payload `{text, thread_id}`):
 
   ```python
   hr.append_event(hr.default_db_path(), room_id=rid, event_id=f"ev-{rid}-{tid}",
@@ -461,82 +461,82 @@ hooks, cron — sans moteur d'orchestration custom.
       authority_gateway_id=hr.local_authority_gateway_id(), authority_epoch=1)
   ```
 
-  Round 1 = les membres mentionnés (aucune mention = tous) ; rounds 2-3 = opt-in
-  (un pair cité qui n'a pas encore parlé).
-- **⚠️ Piège multi-gateway : la base des rooms est PARTAGÉE par tous les profils.**
-  `default_db_path()` = `~/.hermes/shared-state.db`, quel que soit le profil
-  (délibéré : éviter que les gateways de profil écrivent dans `state.db`). Et
-  **chaque gateway démarre son worker de room**, sans levier de désactivation.
-  Conséquence vécue : avec plusieurs gateways actifs, ils se disputent le lease
-  de room (`lease_ttl_seconds=30`) et le gagnant marque `indeterminate` toute
-  tâche `running` sans sa propre fence (variable `foreign_running`,
-  `hosted_room_driver.py`) — une délibération peut donc partir en
-  `indeterminate`. **Ce n'est PAS auto-réparateur** : la réconciliation ne peut pas
-  récupérer le tour d'un autre processus, elle le « defer » avec
-  `reason='member_unavailable'` toutes les ~60 s — tant que le lease circule, le cycle
-  `indeterminate → deferred → retry` tourne indéfiniment et la délibération ne progresse
-  plus. Le lease garantit l'exclusion mutuelle (aucun doublon d'`event_id`) mais **pas la
-  progression**. Sortie de secours : `request_room_stop` (fence `room.stop_requested`),
-  qui supersède les tours antérieurs et fait repasser le planificateur à `idle` — préférer
-  cette fence à un kill. Régime sûr : **une seule délibération active** quand plusieurs
-  gateways tournent. Diagnostic chiffré (compteur `lease_generation`, nombre de
-  `run_process_generation` distincts) et mécanisme complet :
+  Round 1 = the mentioned members (no mention = all); rounds 2-3 = opt-in
+  (a quoted peer that has not spoken yet).
+- **⚠️ Multi-gateway trap: the room database is SHARED by all profiles.**
+  `default_db_path()` = `~/.hermes/shared-state.db`, whatever the profile
+  (deliberate: to keep profile gateways from writing into `state.db`). And
+  **every gateway starts its room worker**, with no disabling lever.
+  Consequence experienced: with several active gateways, they fight over the room
+  lease (`lease_ttl_seconds=30`) and the winner marks `indeterminate` every
+  `running` task without its own fence (variable `foreign_running`,
+  `hosted_room_driver.py`) — a deliberation can therefore go
+  `indeterminate`. **It is NOT self-healing**: the reconciliation cannot
+  recover another process's turn, it "defers" it with
+  `reason='member_unavailable'` every ~60 s — as long as the lease circulates, the cycle
+  `indeterminate → deferred → retry` spins indefinitely and the deliberation stops
+  progressing. The lease guarantees mutual exclusion (no duplicate `event_id`) but **not
+  progress**. Escape hatch: `request_room_stop` (fence `room.stop_requested`),
+  which supersedes earlier turns and makes the planner return to `idle` — prefer
+  that fence over a kill. Safe regime: **a single active deliberation** when several
+  gateways run. Quantitative diagnostic (`lease_generation` counter, number of
+  distinct `run_process_generation`) and the full mechanism:
   `references/hosted-rooms.md`.
-- Board = engagement : décisions, artifacts, statuts, audit. Le bot pivot
-  (scrum) participe à la room ET porte les tools kanban_* : il écrit les
-  conclusions en `kanban_comment`. Une room ne remplace jamais le board comme
-  source de vérité.
-- `message_agent` (DM bot↔bot, fire-and-forget) n'existe que dans le canonical
-  Bot Chat — en room, @mentionner suffit.
-- Coût : la room fait tourner plusieurs bots par échange ; le board un worker
-  à la fois. Délibérer en room, livrer au board.
+- Board = commitment: decisions, artifacts, statuses, audit. The pivot bot
+  (scrum) takes part in the room AND carries the kanban_* tools: it writes the
+  conclusions in `kanban_comment`. A room never replaces the board as the
+  source of truth.
+- `message_agent` (bot↔bot DM, fire-and-forget) exists only in the canonical
+  Bot Chat — in a room, @mentioning is enough.
+- Cost: the room runs several bots per exchange; the board one worker
+  at a time. Deliberate in the room, deliver on the board.
 
-## Voir aussi
+## See also
 
-- Skill `hermes-kanban-multiagent-pipelines` : activation des deux couches
-  (board Desktop = toggle Capabilities, tools = clef racine `toolsets`),
-  et son `references/activating-kanban.md` pour le diagnostic « qui tient le
-  verrou dispatcher » (`fuser -v ~/.hermes/kanban/.dispatcher.lock`).
-- `kanban-gate` : protocole worker pour lire/agir sur le verdict `[gate]`.
-- `gh-kanban-bridge` : pont GitHub↔kanban + le glue custom (workflows YAML).
-- Skill bundled `hermes-agent` : routing table vers la doc officielle.
-- `references/kanban-builtins.md` : table des transitions + mécanique rooms.
-- `references/hosted-rooms.md` : API bas niveau des rooms (signatures, bornes réelles,
-  kinds d'events, base partagée), cycle de vie, et diagnostic du livelock multi-gateway
-  (compteur `lease_generation`, fence `request_room_stop`).
-- `references/issue-pipeline.md` : pipeline complet issue GitHub → PR — import
-  en triage, deployer mécanique, gates humains block/unblock, submitted/PR,
-  contrat de format des cartes (5 sections + BDD + DoR/DoD + INVEST).
-- `pj-pipeline/references/graph-manifest.md` : schéma du manifeste de graphe
-  (`slices.json`) et les règles que son validateur doit refuser — le pendant
-  concret de la règle « le graphe se construit mécaniquement ».
-- `scripts/kanban_card_lint.py` : linter déterministe 0-LLM du contrat de format
-  des cartes (sections, BDD, DoR/DoD, garde-fous, dimensionnement) — exit 1 si
-  non conforme ; à appeler AVANT un gate humain de validation.
-- `scripts/pj_repo_watch.py` : watcher d'onboard automatique des nouveaux repos
-  (copie live dans le scripts/ du profil orchestrateur), onboard en 2 phases.
-- Le scheduler cron résout `--script` dans le scripts/ DU PROFIL
-  (`~/.hermes/profiles/<nom>/scripts/`), pas `${HERMES_WORKFLOW}/pipeline/` (qui n'est que le cas
-  du profil default) — y copier les scripts (pas de symlink, refusé par realpath).
-  Un script au mauvais endroit = échec silencieux répété `Script not found` : les ticks
-  d'un cron no-agent se ressemblent tous, donc VÉRIFIER `Last run: ok` dans
-  `hermes cron list` après création (sinon croire à tort que l'automation tourne).
-  Un stdout vide n'est PAS la preuve qu'un cron fonctionne.
-- Allowlist d'un bot-profil (`DISCORD_ALLOWED_USERS=<discord_user_id>`) : sans elle
-  l'humain est ignoré en silence, et un handler de bouton fail-closed rejette le clic sans
-  message. Vérifier l'ID réel via `/guilds/<id>/members` de l'API Discord, pas de mémoire.
-- **Le bridge est paramétrable par env — une seule copie sert N projets.**
-  `GH_REPO` + `KANBAN_BOARD` + `KANBAN_ASSIGNEE` (+ `BOT_GRACE_SECONDS`, et un flag pour
-  importer en `triage` au lieu de `ready`). Deux repos sur le MÊME board se collisionnent :
-  la clé d'idempotence est `gh-issue-<n>`, numérotée par repo → 1 board par repo. Un
-  `BOT_GRACE_SECONDS` par défaut réserve les issues fraîches à un bot de triage : le mettre
-  à 0 sur les boards sans bot, sinon les nouvelles issues semblent ignorées pendant 10 min.
-  Un repo vide (aucun commit) n'est ni clonable ni branchable — l'import d'issues peut
-  toutefois tourner (cartes en attente) : découper l'onboard en deux phases (board+crons
-  dès la création du repo, branche+clone au premier commit).
-- Auto-onboard des nouveaux repos : watcher déterministe (copie live
-  `scripts/pj_repo_watch.py`, cron */10 sur le profil orchestrateur) —
-  détecte tout repo non archivé sans board `pj-<slug>` et déroule les
-  4 étapes d'onboard (branche dev, clone anchor, wrappers, crons) puis pose
-  le board EN DERNIER comme marqueur de complétion ; idempotent, repo vide
-  = différé au premier commit, retry au tick suivant sur échec.
+- Skill `hermes-kanban-multiagent-pipelines`: activating both layers
+  (Desktop board = Capabilities toggle, tools = root key `toolsets`),
+  and its `references/activating-kanban.md` for the diagnostic "who holds the
+  dispatcher lock" (`fuser -v ~/.hermes/kanban/.dispatcher.lock`).
+- `kanban-gate`: worker protocol for reading/acting on the `[gate]` verdict.
+- `gh-kanban-bridge`: GitHub↔kanban bridge + the custom glue (YAML workflows).
+- Bundled `hermes-agent` skill: routing table to the official docs.
+- `references/kanban-builtins.md`: transition table + room mechanics.
+- `references/hosted-rooms.md`: low-level rooms API (signatures, real bounds,
+  event kinds, shared database), lifecycle, and the multi-gateway livelock diagnostic
+  (`lease_generation` counter, `request_room_stop` fence).
+- `references/issue-pipeline.md`: the full GitHub issue → PR pipeline — import
+  into triage, mechanical deployer, human block/unblock gates, submitted/PR,
+  card format contract (5 sections + BDD + DoR/DoD + INVEST).
+- `pj-pipeline/references/graph-manifest.md`: schema of the graph manifest
+  (`slices.json`) and the rules its validator must refuse — the concrete
+  counterpart of the "the graph is built mechanically" rule.
+- `scripts/kanban_card_lint.py`: deterministic 0-LLM linter for the card format
+  contract (sections, BDD, DoR/DoD, guardrails, sizing) — exit 1 when
+  non-compliant; to be called BEFORE a human validation gate.
+- `scripts/pj_repo_watch.py`: automatic onboard watcher for new repos
+  (live copy in the orchestrator profile's scripts/), onboard in 2 phases.
+- The cron scheduler resolves `--script` in the PROFILE's scripts/
+  (`~/.hermes/profiles/<name>/scripts/`), not `${HERMES_WORKFLOW}/pipeline/` (which is only the
+  default profile's case) — copy the scripts there (no symlink, refused by realpath).
+  A script in the wrong place = repeated silent failure `Script not found`: the ticks
+  of a no-agent cron all look alike, so CHECK `Last run: ok` in
+  `hermes cron list` after creation (otherwise you wrongly believe the automation runs).
+  An empty stdout is NOT proof that a cron works.
+- A bot profile's allowlist (`DISCORD_ALLOWED_USERS=<discord_user_id>`): without it
+  the human is ignored silently, and a fail-closed button handler rejects the click with no
+  message. Check the real ID through `/guilds/<id>/members` of the Discord API, not from memory.
+- **The bridge is parameterised by env — one copy serves N projects.**
+  `GH_REPO` + `KANBAN_BOARD` + `KANBAN_ASSIGNEE` (+ `BOT_GRACE_SECONDS`, and a flag to
+  import into `triage` instead of `ready`). Two repos on the SAME board collide:
+  the idempotency key is `gh-issue-<n>`, numbered per repo → 1 board per repo. A
+  default `BOT_GRACE_SECONDS` reserves fresh issues for a triage bot: set it
+  to 0 on boards without a bot, otherwise new issues look ignored for 10 min.
+  An empty repo (no commit) is neither clonable nor branchable — the issue import can
+  still run (pending cards): split the onboard into two phases (board+crons
+  at repo creation, branch+clone at the first commit).
+- Auto-onboard of new repos: deterministic watcher (live copy
+  `scripts/pj_repo_watch.py`, cron */10 on the orchestrator profile) —
+  detects any non-archived repo without a `pj-<slug>` board and runs the
+  4 onboard steps (dev branch, anchor clone, wrappers, crons) then sets
+  the board LAST as a completion marker; idempotent, an empty repo
+  = deferred to the first commit, retried on the next tick on failure.
