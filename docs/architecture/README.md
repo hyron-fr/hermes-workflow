@@ -18,6 +18,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-4]] — Versionner pj_escalate.py (pipeline/) : garde-fou d'état d'issue + résolution de binaire hors PATH.
 - [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
+- [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 
 ## Décisions (ADR)
 
