@@ -9,6 +9,12 @@ Slice 2 (#5) ajoute trois choses, et chaque section du fichier porte son défaut
   · l'EXEMPTION du parent : `overlaps = (refs | titres) - {parent} - {self}` ;
   · l'ancre de `issues_with_graph()` : plus d'issue fantôme (#7 citée par un corps) ;
   · la TRAPPE corrigée : l'échappatoire proposée doit être RÉELLE.
+
+Slice 2b (#5) ferme le dernier mensonge de cette trappe : elle doit être
+EXÉCUTABLE dans le tick qui la propose. Le label `pj-import` est assuré dans tout
+tick qui poste une trappe OU importe une issue, et AVANT le premier commentaire de
+trappe — le banc de la slice 2 ne mesurait qu'un tick IMPORTABLE, donc jamais le
+cas de la trappe (`to_import` vidé par le gate).
 """
 import contextlib
 import importlib.util
@@ -1017,3 +1023,252 @@ def test_slice3_erreur_un_corps_sans_ligne_d_import_ne_leve_pas(br):
     for corps in (None, "", "corps sans ligne de protocole", "voir #4", "—\n—"):
         assert br.issue_number_of(_carte_slice3("t", "done", corps)) is None, (
             f"corps {corps!r} : un numéro a été inventé")
+
+
+# =========================================================================
+# slice 2b (#5) — LA TRAPPE EST EXÉCUTABLE DANS LE TICK QUI LA PROPOSE
+#
+# Défaut mesuré (sonde hors ligne, 0 réseau) : `ensure_import_override_label()`
+# vivait sous `if to_import and not DRY_RUN:` APRÈS que le gate a vidé
+# `to_import` des issues couvertes. Conséquence : le tick dont la SEULE
+# candidate est couverte poste la trappe (« poser le label `pj-import` ») sans
+# avoir jamais créé ce label — l'humain qui suit le conseil reçoit
+# `could not add label: 'pj-import' not found`.
+#
+# Contrat figé (arbitrage) :
+#   C1 — le label est assuré dans TOUT tick qui (a) poste une trappe OU
+#        (b) importe une issue, et AVANT le premier commentaire de trappe ;
+#   C2 — un échec de création est BRUYANT (nom du label + stderr tracés,
+#        exception non avalée) et ne fait aucune promesse : AUCUNE trappe
+#        nommant `pj-import` n'est postée sur ce tick ;
+#   C3 — `DRY_RUN=1` n'écrit rien (comportement conservé).
+#
+# Ce que le banc de la slice 2 ne mesurait PAS : l'ORDRE « créer avant de
+# proposer », et le cas `to_import` vide — son seul cas de label tournait sur un
+# tick IMPORTABLE, donc exactement le tick qui n'est pas celui de la trappe.
+# =========================================================================
+
+
+def _prepare(pont, gh_state, kanban_state):
+    """Pose l'état des deux faux binaires et vide les journaux d'appels."""
+    _, d = pont
+    (d / "gh_state.json").write_text(json.dumps(gh_state, ensure_ascii=False))
+    (d / "kanban_state.json").write_text(json.dumps(kanban_state, ensure_ascii=False))
+    for f in ("gh_calls.log", "kanban_calls.log"):
+        (d / f).write_text("")
+
+
+def _appels(pont):
+    """(appels gh, appels kanban) relus des journaux du dernier tick."""
+    _, d = pont
+    return ([json.loads(l) for l in (d / "gh_calls.log").read_text().splitlines() if l],
+            [json.loads(l) for l in (d / "kanban_calls.log").read_text().splitlines() if l])
+
+
+def _creations_du_label(gh_calls, label):
+    """Indices des `gh label create <label>` de la trace, dans l'ordre émis."""
+    return [i for i, c in enumerate(gh_calls) if c[:3] == ["label", "create", label]]
+
+
+def _index_trappe(gh_calls):
+    """Index du PREMIER commentaire portant le marqueur de trappe, ou None."""
+    return next((i for i, c in enumerate(gh_calls)
+                 if c[:2] == ["issue", "comment"] and len(c) > 6 and GATE_MARKER in c[6]), None)
+
+
+def _gh_label_create_echoue(pont, stderr, code=1):
+    """Fait répondre au faux `gh` un ÉCHEC sur `label create` (stderr + code).
+
+    La journalisation de l'appel est faite AVANT la lecture d'état : l'appel reste
+    donc visible dans `gh_calls.log`, c'est lui que le banc mesure. Aucun accès
+    réseau : le binaire remplacé est local au `tmp_path` du harnais.
+    """
+    _, d = pont
+    script = (d / "gh").read_text().replace(
+        'state = json.load(open(os.path.join(here, "gh_state.json")))',
+        'if sys.argv[1:2] == ["label"]:\n'
+        f'    sys.stderr.write({stderr!r} + "\\n")\n'
+        f'    sys.exit({code})\n'
+        'state = json.load(open(os.path.join(here, "gh_state.json")))')
+    (d / "gh").write_text(script)
+
+
+def _tick_couvert(pont, numero=70, titre="Refonte graphique des acteurs", commentaires=None):
+    """Un tick dont la SEULE candidate est couverte par le gate (`to_import` vidé).
+
+    L'issue cite `#5`, dont le graphe est posé sur le board : c'est le
+    chevauchement, et le corps est construit POUR être refusé sans échappatoire.
+    """
+    etat = {"issues": [_issue(numero, titre, "suite de #5")], "prs": []}
+    if commentaires is not None:
+        etat["comments"] = commentaires
+    return _tick(pont, etat, {"tasks": [_carte_racine(5)]})
+
+
+# ---------------------------------------------------------------- NOMINAL ---
+
+def test_slice2b_nominal_le_geste_propose_par_la_trappe_est_executable_dans_ce_tick(pont):
+    """NOMINAL — tick dont la seule candidate est couverte (`to_import` vide).
+
+    La trappe propose « poser le label `pj-import` » : ce geste doit être
+    exécutable DANS LE TICK qui le propose, donc le label doit être créé avant le
+    commentaire. L'assertion d'ordre est celle que le banc de la slice 2 n'avait
+    pas : un correctif qui créerait le label APRÈS la trappe laisserait l'humain
+    devant un label absent pendant tout le tick.
+
+    Contrôle de prémisse joint : 0 carte créée (la candidate reste bloquée : c'est
+    bien la trappe, pas un import).
+    """
+    mod, _ = pont
+    gh, kb = _tick_couvert(pont)
+    trappes = _motifs_gate(gh)
+    assert trappes, "prémisse fausse : aucune trappe postée sur ce tick couvert"
+    assert mod.IMPORT_OVERRIDE_LABEL in trappes[0], (
+        f"la trappe ne nomme pas l'échappatoire : {trappes[0][:200]!r}")
+    assert _creees(kb) == [], (
+        f"la candidate couverte a été importée ({_creees(kb)}) : ce n'est pas la trappe")
+
+    crees = _creations_du_label(gh, mod.IMPORT_OVERRIDE_LABEL)
+    assert crees, (
+        f"le tick poste une trappe qui propose `{mod.IMPORT_OVERRIDE_LABEL}` sans "
+        f"jamais le créer : label gh émis = {[c[:3] for c in gh if c[0] == 'label']}")
+    idx_trappe = _index_trappe(gh)
+    assert idx_trappe is not None, "prémisse fausse : aucune trappe n'est tracée dans le tick"
+    assert crees[0] < idx_trappe, (
+        f"ordre inversé : label create à l'index {crees[0]}, trappe à l'index {idx_trappe} "
+        f"— le geste proposé n'existe pas encore quand il est proposé")
+
+
+def test_slice2b_nominal_un_tick_qui_importe_cree_toujours_le_label(pont):
+    """NOMINAL (non-régression) — le cas (b) de C1 reste tenu : un tick qui importe
+    une issue, SANS aucune trappe, assure l'existence du label.
+
+    Tue l'implémentation fautive qui déplacerait la création SOUS `if covered:` :
+    elle ferait passer le nominal ci-dessus tout en cassant le cas déjà livré.
+    """
+    mod, _ = pont
+    gh, kb = _tick(pont, {"issues": [_issue(61, "Ajouter un compteur de parties", "neuf")],
+                          "prs": []},
+                   {"tasks": [], "next_task_id": "t_cree"})
+    assert _motifs_gate(gh) == [], "prémisse fausse : ce tick ne devait poster aucune trappe"
+    assert _creations_du_label(gh, mod.IMPORT_OVERRIDE_LABEL), (
+        f"tick importable sans création du label : {[c[:3] for c in gh if c[0] == 'label']}")
+    assert _creees(kb) == ["Ajouter un compteur de parties"]
+
+
+# ----------------------------------------------------------------- LIMITE ---
+
+def test_slice2b_limite_deux_ticks_couverts_et_le_second_n_empile_rien(pont):
+    """LIMITE — deux ticks successifs de même forme, la trappe étant déjà postée
+    au second : la création du label ne dépend PAS d'un import tiers, et le second
+    tick ne casse rien (aucun commentaire empilé, label toujours assuré).
+    """
+    mod, _ = pont
+    gh1, kb1 = _tick_couvert(pont)
+    assert len(_motifs_gate(gh1)) == 1, "le premier tick devait poster UNE trappe"
+    assert _creations_du_label(gh1, mod.IMPORT_OVERRIDE_LABEL), "1er tick : label non créé"
+
+    deja = {str(70): [{"body": f"{GATE_MARKER}\n\ndéjà signalée au tick précédent"}]}
+    gh2, kb2 = _tick_couvert(pont, commentaires=deja)
+    assert _motifs_gate(gh2) == [], "la trappe a été EMPILÉE sur un tick déjà signalé"
+    assert _creations_du_label(gh2, mod.IMPORT_OVERRIDE_LABEL), (
+        "2e tick : le label n'est pas assuré alors que la trappe est toujours en vigueur")
+    assert _creees(kb1) == [] and _creees(kb2) == [], "un tick couvert a importé sa candidate"
+
+
+def test_slice2b_limite_un_label_deja_present_ne_fait_pas_echouer_le_tick(pont):
+    """LIMITE — `gh label create` répond « already exists » (exit 1 + stderr).
+
+    C'est le cas NORMAL dès le 2e tick : la création doit rester idempotente, donc
+    ce stderr n'est PAS un échec. Sans cette garde, chaque tick après le premier
+    perdrait sa trappe sur un faux échec.
+    """
+    mod, _ = pont
+    _gh_label_create_echoue(
+        pont, 'label "pj-import" already exists (create it with --force to overwrite)', code=1)
+    gh, kb = _tick_couvert(pont)
+    trappes = _motifs_gate(gh)
+    assert trappes, ("un label déjà présent a fait perdre la trappe du tick "
+                     "(« already exists » traité comme échec)")
+    assert _creations_du_label(gh, mod.IMPORT_OVERRIDE_LABEL), "l'appel de création n'est plus émis"
+    assert _creees(kb) == []
+
+
+def test_slice2b_limite_tick_mixte_l_ordre_tient_et_le_label_n_est_cree_qu_une_fois(pont):
+    """LIMITE — tick MIXTE : une candidate couverte ET une issue importable.
+
+    Deux mesures dans le même tick : (1) l'ordre « créer AVANT le premier
+    commentaire de trappe » tient même quand la boucle d'import suit ; (2) une
+    seule création de label est émise (le tick ne paie pas un appel par candidate).
+    """
+    mod, _ = pont
+    gh, kb = _tick(pont, {"issues": [
+        _issue(70, "Refonte graphique des acteurs", "suite de #5"),
+        _issue(61, "Ajouter un compteur de parties", "neuf")], "prs": []},
+        {"tasks": [_carte_racine(5)], "next_task_id": "t_cree"})
+    trappes = _motifs_gate(gh)
+    assert trappes and mod.IMPORT_OVERRIDE_LABEL in trappes[0], "prémisse fausse : pas de trappe"
+    crees = _creations_du_label(gh, mod.IMPORT_OVERRIDE_LABEL)
+    assert crees, (
+        f"une seule création attendue par tick, mesuré {[c[:3] for c in gh if c[0] == 'label']}")
+    assert len(crees) == 1, (
+        f"une seule création attendue par tick, mesuré {len(crees)} : "
+        f"{[c[:3] for c in gh if c[0] == 'label']}")
+    idx_trappe = _index_trappe(gh)
+    assert idx_trappe is not None, "prémisse fausse : aucune trappe tracée dans ce tick mixte"
+    assert crees[0] < idx_trappe, "le label est créé APRÈS la trappe qui le propose"
+    assert _creees(kb) == ["Ajouter un compteur de parties"], (
+        f"seule l'issue non couverte doit être importée ; mesuré {_creees(kb)}")
+
+
+# ----------------------------------------------------------------- ERREUR ---
+
+def test_slice2b_erreur_un_label_non_cree_ne_laisse_aucune_trappe_qui_promet(pont):
+    """ERREUR — la création échoue (quota, permission, réseau) : bruyant, et AUCUNE
+    promesse laissée derrière.
+
+    Deux mesures : (1) l'échec nomme le label et le stderr, et l'exception N'EST
+    PAS avalée (le tick s'arrête) ; (2) aucun commentaire de trappe nommant
+    `pj-import` n'est posté — sinon l'humain lit un geste que le pont vient
+    justement de constater impossible. Conséquence assumée du contrat : le
+    signalement du chevauchement est reporté au tick suivant, il n'est pas perdu.
+    """
+    mod, _ = pont
+    _gh_label_create_echoue(pont, "boom: could not create label (quota exceeded)")
+    _prepare(pont, {"issues": [_issue(70, "Refonte graphique des acteurs", "suite de #5")],
+                    "prs": []}, {"tasks": [_carte_racine(5)]})
+    mod.QUIET_IDLE = False       # l'échec doit être VISIBLE sur la sortie du tick
+    sortie = io.StringIO()
+    with pytest.raises(Exception) as exc, contextlib.redirect_stdout(sortie):
+        mod.pull()
+    message = str(exc.value)
+    assert mod.IMPORT_OVERRIDE_LABEL in message and "boom" in message, (
+        f"l'échec n'est pas diagnostiquable : {message!r}")
+    gh, kb = _appels(pont)
+    assert _motifs_gate(gh) == [], (
+        f"une trappe promettant `{mod.IMPORT_OVERRIDE_LABEL}` a été postée alors que sa "
+        f"création venait d'échouer")
+    trace = sortie.getvalue()
+    assert mod.IMPORT_OVERRIDE_LABEL in trace and "boom" in trace, (
+        f"l'échec n'est pas tracé (nom du label + stderr attendus) : {trace[:400]!r}")
+    assert _creees(kb) == []
+
+
+def test_slice2b_erreur_dry_run_n_cree_ni_label_ni_carte(pont):
+    """ERREUR — `DRY_RUN=1` n'écrit rien (C3, comportement conservé).
+
+    Périmètre de l'assertion : les écritures que CETTE vague ajoute — la création
+    du label et la création de carte. Mesuré AVANT la vague, sur la copie
+    versionnée d'avant correctif : un tick couvert en `DRY_RUN=1` émet déjà son
+    commentaire de trappe (comportement pré-existant, hors du contrat de la
+    slice 2b — porté en commentaire de carte comme écart, jamais corrigé ici en
+    silence). Ce cas tue l'implémentation fautive qui créerait le label sans
+    regarder `DRY_RUN`.
+    """
+    mod, _ = pont
+    mod.DRY_RUN = True           # lu à l'exécution par `pull()` (global du module)
+    gh, kb = _tick_couvert(pont)
+    assert [c[:3] for c in gh if c[0] == "label"] == [], (
+        f"DRY_RUN=1 a créé un label : {[c[:3] for c in gh if c[0] == 'label']}")
+    assert [c for c in kb if len(c) > 3 and c[3] == "create"] == [], (
+        f"DRY_RUN=1 a créé une carte : {[c[:5] for c in kb if len(c) > 3 and c[3] == 'create']}")
