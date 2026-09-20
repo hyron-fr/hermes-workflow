@@ -41,7 +41,6 @@ by this bank, and every count is computed from the bytes in hand.
 import hashlib
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -119,7 +118,6 @@ URL_RE = re.compile(r"https?://\S+")
 QUOTED_RE = re.compile(r"«[^»]*»|“[^”]*”|\"[^\"]*\"")
 QUOTED_MAX_WORDS = 4
 FENCE_RE = re.compile(r"^\s*```")
-HEADING_RE = re.compile(r"^\s{0,6}#{0,6}\s{0,4}(?:\d\.\s*)?")
 PLACEHOLDER_RE = re.compile(r"\$\{[A-Z_]+\}")
 VERDICT_RE = re.compile(r"\b(PROTOTYPE|AMBIGU|ARTEFACT)\s*:")
 SCRIPT_REF_RE = re.compile(r"[\w./-]+\.(?:py|sh)\b")
