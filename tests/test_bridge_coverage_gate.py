@@ -733,3 +733,287 @@ def test_les_deux_copies_versionnees_du_pont_sont_identiques():
     premier = autres[0].read_bytes()
     for p in autres[1:]:
         assert p.read_bytes() == premier, f"{p} a divergé de {autres[0]}"
+
+
+# =========================================================================
+# slice 3 (#5) — `issue_number_of()` ANCREE SUR LA LIGNE D'IMPORT
+#
+# Défaut mesuré sur les cartes RÉELLES du board : `issue_number_of()` prend le
+# PREMIER `/issues/<n>` trouvé n'importe où dans le corps. `push()` ferme donc
+# l'issue de toute carte `done` qui **cite** une URL, pas seulement de la carte
+# racine que `pull()` a écrite. Deux porteurs réels, lus en base :
+#
+#   · `t_6333de16` « t6 submitted #1 » — `done` le 2026-09-19T23:38:27Z, sa 1re
+#     ligne est « Issue GitHub : …/issues/1 ». Cette URL n'est pas un détail :
+#     `pj_graphwatch` apparie la carte à l'issue avec elle, elle est donc là
+#     PAR CONSTRUCTION et ne peut pas être retirée. L'issue #1 a été fermée
+#     2 min plus tard, PR #3 encore ouverte (mergée +7 h), puis rouverte à la
+#     main — et re-fermée une 2ᵉ fois le même soir.
+#   · la carte racine de #5 elle-même, dans son corps du 15:34Z : l'URL de #4
+#     apparaissait à l'offset 7737, la ligne d'import de #5 à 8099 — la règle
+#     brute rendait **4**.
+#
+# La règle est celle ratifiée par la décision humaine (carte `t_a20cbfe1`) :
+# ancrer la LIGNE DE PROTOCOLE que `pull()` écrit elle-même — `Importé depuis
+# <url>` en début de ligne, `^…$` en multi-ligne. Jamais le test de
+# sous-chaîne : mesuré, `"Importé depuis" in body` retient 49 cartes sur
+# `pj-hermes-workflow` dont 47 ne sont que des cartes `slice k` citant le
+# littéral machine en prose (la spec le gèle verbatim).
+#
+# RISQUE de l'ancre stricte, mesuré AVANT d'écrire ces cas — 6 boards,
+# 130 cartes `done` : **0 carte légitime perdue** en passant de « la ligne
+# CONTIENT le marqueur » à « la ligne COMMENCE par le marqueur ». Les seules
+# formes écartées sont 6 cartes `archived` de smoke-test d'un autre board,
+# écrites à la main (jamais par `pull()`), donc jamais éligibles à `push()`.
+# =========================================================================
+
+SLICE3_MARQUEUR = "Importé depuis"
+CORPS_DEFAUT = "corps de l'issue"
+
+# Les 5 numéros réellement portés par une ligne de protocole sur le board
+# (cartes à clé `gh-issue-*`), mesurés : 1, 2, 4, 5, 7.
+CANONIQUES = (1, 2, 4, 5, 7)
+
+
+def _url(numero, repo=FAKE_REPO):
+    """L'URL d'issue telle que `pull()` l'écrit (`issue['url']`)."""
+    return f"https://github.com/{repo}/issues/{numero}"
+
+
+def _corps_canonique(numero, entete=CORPS_DEFAUT):
+    """Le corps EXACT produit par `pull()` : le body de l'issue, puis un
+    séparateur `\\n\\n—\\n`, puis « Importé depuis <url> » (ligne 500 du pont)."""
+    return f"{entete}\n\n—\n{SLICE3_MARQUEUR} {_url(numero)}"
+
+
+def _carte_slice3(task_id, statut, corps, titre="carte"):
+    """Une carte telle que `kanban list --json` la rend."""
+    return {"id": task_id, "status": statut, "title": titre, "body": corps}
+
+
+@pytest.fixture(scope="module")
+def br3():
+    """Le pont chargé AVEC le dépôt `FAKE_REPO` — celui de ce harnais.
+
+    Le fixture `br` (slice 1/2) est partagé et tourne sur `hyron-fr/dino-game` :
+    l'utiliser ici ferait rendre `None` aux fixtures en `FAKE_REPO`, c'est-à-dire
+    rougir POUR LA MAUVAISE RAISON. `GH_REPO` est posé sur le module lui-même,
+    pas seulement dans l'environnement, pour que le dépôt configuré soit univoque.
+    """
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("GH_REPO", FAKE_REPO)
+    monkeypatch.setenv("KANBAN_BOARD", "pj-fake-pont")
+    for var in VARIABLES_DU_PONT:
+        monkeypatch.delenv(var, raising=False)
+    spec = importlib.util.spec_from_file_location("br_slice3", PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.GH_REPO = FAKE_REPO
+    yield mod
+    monkeypatch.undo()
+
+
+@pytest.fixture
+def push_pont(tmp_path, monkeypatch):
+    """Le pont chargé avec `gh` et `kanban` REMPLACÉS par des enregistreurs.
+
+    `push()` ne fait aucun aller-retour réseau dans ce harnais : on observe
+    exactement quels numéros d'issue il ferme, ce qui est le contrat de la slice.
+    """
+    monkeypatch.setenv("GH_REPO", FAKE_REPO)
+    monkeypatch.setenv("KANBAN_BOARD", "pj-fake-pont")
+    for var in VARIABLES_DU_PONT:
+        monkeypatch.delenv(var, raising=False)
+    spec = importlib.util.spec_from_file_location("br_slice3_push", PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.GH_REPO = FAKE_REPO
+
+    appels = {"tasks": [], "closed": [], "comment": []}
+
+    def faux_gh(*args):
+        if tuple(args[:2]) == ("issue", "view"):
+            return json.dumps({"state": "OPEN", "number": int(args[2])})
+        if tuple(args[:2]) == ("issue", "close"):
+            appels["closed"].append(int(args[2]))
+            return ""
+        return ""
+
+    def faux_kanban(*args):
+        if args and args[0] == "list":
+            return json.dumps(appels["tasks"], ensure_ascii=False)
+        if args and args[0] == "runs":
+            return "[]"
+        if args and args[0] == "comment":
+            appels["comment"].append(args)
+        return "{}"
+
+    monkeypatch.setattr(mod, "gh", faux_gh)
+    monkeypatch.setattr(mod, "kanban", faux_kanban)
+    return mod, appels
+
+
+# ---------------------------------------------------------------- NOMINAL ---
+
+def test_slice3_nominal_le_corps_de_l_issue_ne_detourne_pas_la_ligne_d_import(br3):
+    """NOMINAL — un corps qui cite une AUTRE issue par son URL AVANT la ligne
+    d'import : la règle rend le numéro de la ligne écrite par `pull()`.
+
+    Fixture calquée sur le corps réel de la racine de #5 (version 15:34Z), où
+    l'URL de #4 précédait la ligne d'import de #5.
+    """
+    corps = (f"## 5. Hors-scope\n\n"
+             f"- **Non** : le versionnement de l'autre issue — déjà traité par\n"
+             f"  {_url(4)} — cette issue-ci ne le redouble pas.\n"
+             f"- **Non** : les décisions du pipeline lui-même.\n"
+             f"\n—\n{SLICE3_MARQUEUR} {_url(5)}")
+    # PRÉMISSE : la fixture exerce bien le défaut — la 1re URL du corps est une
+    # AUTRE issue. Sans elle, un corps mal construit rendrait le cas vert.
+    premiere = re.search(r"/issues/(\d+)", corps)
+    assert premiere and premiere.group(1) == "4", (
+        f"fixture non discriminante : 1re URL = {premiere and premiere.group(1)}")
+    assert br3.issue_number_of(_carte_slice3("t_racine", "done", corps)) == 5
+
+
+@pytest.mark.parametrize("numero", CANONIQUES)
+def test_slice3_nominal_la_forme_canonique_de_pull_est_reconnue(br3, numero):
+    """NOMINAL anti-régression — la ligne exacte écrite par `pull()` reste lue,
+    pour les 5 numéros réellement présents sur le board.
+
+    L'ancre ne doit perdre AUCUNE carte légitime : c'est le risque nommé par la
+    carte (« une ancre trop stricte ferait perdre une carte légitime »).
+    """
+    assert br3.issue_number_of(
+        _carte_slice3(f"t_racine_{numero}", "done", _corps_canonique(numero))) == numero
+
+
+# ----------------------------------------------------------------- LIMITE ---
+
+def test_slice3_limite_le_marqueur_cite_en_prose_ne_detourne_pas(br3):
+    """LIMITE — le corps MENTIONNE le marqueur en prose, et la ligne suivante
+    porte l'URL d'une autre issue.
+
+    Forme réelle : 15 cartes du board portent cette phrase (elles citent le
+    littéral machine que la spec gèle verbatim), et la même tournure a produit
+    47 faux positifs sur le test de sous-chaîne.
+    Règle interdite tuée : « première URL APRÈS la première occurrence du
+    marqueur » — mesurée à 4 sur cette fixture.
+    """
+    corps = (f"- interdit de traduire les deux PROTOCOLES verbatim — "
+             f"`{SLICE3_MARQUEUR}` et `ROOM:`.\n"
+             f"  Voir {_url(4)} pour l'historique.\n"
+             f"\n—\n{SLICE3_MARQUEUR} {_url(5)}")
+    assert br3.issue_number_of(_carte_slice3("t", "done", corps)) == 5
+
+
+def test_slice3_limite_l_url_apres_la_ligne_d_import_ne_gagne_pas(br3):
+    """LIMITE — une URL d'autre issue apparaît APRÈS la ligne d'import.
+
+    Règle interdite tuée : « prendre la DERNIÈRE URL du corps ».
+    """
+    corps = (f"corps\n\n—\n{SLICE3_MARQUEUR} {_url(5)}\n\n"
+             f"Le suivi de {_url(4)} est hors périmètre.")
+    assert br3.issue_number_of(_carte_slice3("t", "done", corps)) == 5
+
+
+def test_slice3_limite_le_marqueur_au_milieu_de_ligne_n_est_pas_la_protocole(br3):
+    """LIMITE — le marqueur cité AU MILIEU d'une ligne, cette ligne portant une
+    URL, n'est pas la ligne de protocole.
+
+    `pull()` écrit toujours la sienne en DÉBUT de ligne (le corps de l'issue,
+    puis un séparateur, puis la ligne d'import) : une mention au milieu est une
+    citation, pas un ancrage. Mesuré sur 6 boards / 130 cartes `done` :
+    0 carte perdue par cette exigence.
+    Règle interdite tuée : « la ligne CONTIENT le marqueur » — mesurée à 4 ici.
+    """
+    corps = (f"- rappel : la ligne « {SLICE3_MARQUEUR} {_url(4)} » "
+             f"n'est écrite que par `pull()`.\n"
+             f"\n—\n{SLICE3_MARQUEUR} {_url(5)}")
+    assert br3.issue_number_of(_carte_slice3("t", "done", corps)) == 5
+
+
+def test_slice3_limite_une_ligne_d_import_d_un_autre_depot_ne_compte_pas(br3):
+    """LIMITE — le pont est UN fichier pour 4 dépôts : une ligne de protocole
+    d'un autre dépôt ne désigne aucune issue de `GH_REPO`.
+    """
+    autre = "hyron-fr/autre-depot"
+    assert autre != br3.GH_REPO, "fixture non discriminante : même dépôt"
+    corps = f"corps\n\n—\n{SLICE3_MARQUEUR} {_url(9, repo=autre)}"
+    assert br3.issue_number_of(_carte_slice3("t", "done", corps)) is None
+
+
+def test_slice3_limite_l_espace_de_fin_de_ligne_est_tolere(br3):
+    """LIMITE — tolérance `\\s*$` du motif ratifié (carte `t_a20cbfe1`) : une
+    ligne de protocole suivie d'espaces reste la ligne de protocole.
+
+    Un `$` nu la perdrait et `push()` ne fermerait plus jamais cette issue.
+    """
+    corps = f"corps\n\n—\n{SLICE3_MARQUEUR} {_url(5)}   \n"
+    assert br3.issue_number_of(_carte_slice3("t", "done", corps)) == 5
+
+
+# ----------------------------------------------------------------- ERREUR ---
+
+def test_slice3_erreur_une_carte_qui_cite_l_url_ne_ferme_rien(push_pont):
+    """ERREUR — une carte `done` qui CITE l'URL sans porter la ligne de
+    protocole ne fait fermer AUCUNE issue.
+
+    Forme réelle : `t6 submitted #N`, dont la 1re ligne est « Issue GitHub :
+    <url> ». `pj_graphwatch` se sert de cette URL pour apparier la carte à
+    l'issue : elle est présente PAR CONSTRUCTION.
+    """
+    mod, appels = push_pont
+    appels["tasks"] = [_carte_slice3(
+        "t_t6", "done", f"Issue GitHub : {_url(4)}\n\n⚠️ CETTE CARTE OUVRE LA PR.",
+        titre="t6 submitted #4")]
+    mod.push()
+    assert appels["closed"] == [], (
+        f"le pont a fermé {appels['closed']} sur une carte qui ne fait que citer l'URL")
+
+
+def test_slice3_erreur_l_incident_mesure_ne_se_reproduit_pas(push_pont):
+    """ERREUR — reconstitution de l'incident mesuré sur le board.
+
+    `t_6333de16` « t6 submitted #1 » est passée `done` à 23:38:27Z ; le pont a
+    fermé l'issue #1 à 23:40:42Z, la PR #3 n'a été mergée que 7 h plus tard.
+    Ici la racine est encore `todo` : SEULE la carte `t6` est `done`, donc rien
+    ne doit être fermé.
+    """
+    mod, appels = push_pont
+    appels["tasks"] = [
+        _carte_slice3("t_racine5", "todo", _corps_canonique(5), titre="Racine #5"),
+        _carte_slice3("t_t6_4", "done",
+                      f"Issue GitHub : {_url(4)}\n\n⚠️ CETTE CARTE OUVRE LA PR.",
+                      titre="t6 submitted #4"),
+    ]
+    mod.push()
+    assert appels["closed"] == [], (
+        f"l'incident se reproduit : {appels['closed']} fermée(s) par une carte t6")
+
+
+def test_slice3_erreur_la_fermeture_ne_porte_que_sur_la_carte_racine(push_pont):
+    """ERREUR — board mixte : la racine de #5 (`done`, ligne de protocole) et
+    `t6 submitted #4` (`done`, cite l'URL) sont toutes deux `done`.
+
+    Exactement UNE fermeture, sur #5. Un `[4, 5]` mesure la règle brute ; un
+    `[]` mesure un retour vide — ce cas sépare les deux échecs.
+    """
+    mod, appels = push_pont
+    appels["tasks"] = [
+        _carte_slice3("t_racine5", "done", _corps_canonique(5), titre="Racine #5"),
+        _carte_slice3("t_t6_4", "done",
+                      f"Issue GitHub : {_url(4)}\n\n⚠️ CETTE CARTE OUVRE LA PR.",
+                      titre="t6 submitted #4"),
+    ]
+    mod.push()
+    assert appels["closed"] == [5], (
+        f"fermetures attendues exactement [#5] par la racine ; mesuré {appels['closed']}")
+
+
+def test_slice3_erreur_un_corps_sans_ligne_d_import_ne_leve_pas(br):
+    """ERREUR — corps absent, vide, ou sans ligne de protocole : aucun numéro
+    et AUCUNE exception (une carte non issue du pont ne doit pas casser un tick).
+    """
+    for corps in (None, "", "corps sans ligne de protocole", "voir #4", "—\n—"):
+        assert br.issue_number_of(_carte_slice3("t", "done", corps)) is None, (
+            f"corps {corps!r} : un numéro a été inventé")
