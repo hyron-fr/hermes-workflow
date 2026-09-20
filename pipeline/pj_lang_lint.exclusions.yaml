@@ -12,9 +12,10 @@
 # Granularity is the SPAN, never the whole line: English prose that quotes a protocol
 # below stays clean, while a diacritic elsewhere on the same line is still reported.
 #
-# This file is written in ASCII on purpose: the scan adds every accented string found
-# here to the spans it removes, so prose in this file would silently widen the
-# exemptions.
+# Every ACCENTED string declared here is added by the scan (and by the bench) to the
+# spans it removes, so this file must not carry accented PROSE: an accented word in a
+# comment would silently widen the exemptions. English prose only — the sole accented
+# strings are the frozen literals themselves.
 version: 1
 
 protocoles:
