@@ -182,7 +182,11 @@ def git(*args, cwd=REPO):
 
 
 def tracked_md(root=REPO):
-    """Canonical enumeration of the bank: `git ls-files '*.md'`, never a walk."""
+    """Canonical enumeration of the bank: `git ls-files '*.md'`, never a walk.
+
+    Used by `test_limite_la_calibration_...`'s non-vacuity witness: the count of tracked
+    `.md` is what distinguishes "the corpus shrank" from "the corpus moved".
+    """
     p = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "*.md"],
                        capture_output=True)
     assert p.returncode == 0, p.stderr.decode()
@@ -445,6 +449,7 @@ def test_limite_la_calibration_du_controle_lexical_est_re_mesuree_sur_l_arbre():
         + "\n  ".join("%s:%d %s" % f for f in faux[:10]))
     print("witness: calibration zone %r, %d accent-free lines, %d false positives"
           % (zone, n_lignes, len(faux)))
+    print("witness: tracked .md enumerated by the bank: %d" % len(tracked_md()))
 
     # positive control, same detector: a French line WITHOUT any diacritic must be
     # caught. Without this half, a detector broken to always return [] would green.
