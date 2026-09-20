@@ -28,9 +28,11 @@ NATURE DES CAS (1 nominal + 1 limite + 1 erreur, et de fait bien davantage)
   `--target` vide retombe sur les cibles par défaut ; un écart qui ne porte pas sur les lignes (fin
   de fichier) reste un ÉCART ; un périmètre sans fichier de code n'annonce pas de conformité de
   couverture ; le seuil est configurable et un fichier au-dessus passe.
-- erreur : source illisible dans les deux modes ; wrapper illisible sans bascule ; `--publish` sans
-  cible explicite ; écriture impossible (parent fichier) ; module non chargeable ; `--coverage` sans
-  rapport ni base, rapport illisible ou périmètre inexploitable ; périmètre vide ; rapport muet.
+- erreur : source illisible dans les deux modes ; wrapper illisible sans bascule (chemin en DOSSIER
+  et chemin ABSENT, cause nommée) ; cible en 0444 -> l'`except OSError` de l'écriture est atteint ;
+  `--publish` sans cible explicite ; écriture impossible (parent fichier) ; module non chargeable ;
+  `--coverage` sans rapport ni base, rapport illisible ou périmètre inexploitable ; périmètre vide ;
+  rapport muet.
 
 Aucune horloge réelle, aucun aléa, aucun réseau. Aucun chemin absolu de machine (tout vit sous
 `tmp_path` ; les seuls chemins de dépôt sont dérivés de `REPO`). Aucun test ne lit le texte source
@@ -313,7 +315,74 @@ def test_nominal_un_wrapper_conforme_est_accepte_et_compte(pub, tmp_path, capsys
         f"le contrôle doit dire combien de requises il a vues : {out!r}"
 
 
+def test_nominal_une_cible_non_inscriptible_dit_ecriture_impossible(pub, tmp_path, capsys):
+    """S1 : publier par-dessus une copie installée NON inscriptible (mode 0444) échoue à l'écriture.
+
+    C'est le chemin RÉEL du geste humain : republier par-dessus une copie installée que le compte
+    ne peut pas réécrire. Le refus d'écriture doit être PRONONCÉ (rc 2, la cible et la cause
+    nommées), la cible rester intacte, et aucun succès ne doit être annoncé.
+
+    Le mode est posé sur la CIBLE elle-même (jamais sur le parent du bac), dans un bac jetable
+    sous `tmp_path` : rien n'est écrit hors du bac, et le mode est rendu en sortie de cas pour que
+    le nettoyage de pytest ne bute pas sur un fichier non inscriptible.
+
+    Ce cas est DISCRIMINANT par construction : un outil qui avalerait l'échec d'écriture, ou qui
+    annoncerait « publication établie » sans relire, rougit ici — et il est le seul à exécuter le
+    `except OSError` de l'écriture (le cas du parent-FICHIER sort plus tôt, sur la lecture)."""
+    assert os.geteuid() != 0, \
+        "mesure invalide sous root : le mode 0444 n'y empêche pas l'écriture"
+    bac = _Bac(tmp_path).write(installed=DIVERGENT_1)
+    os.chmod(bac.target, 0o444)
+    avant = bac.target_sha
+    try:
+        assert not os.access(bac.target, os.W_OK), "ancre : la cible doit être réellement fermée"
+        rc, out, err = _run(pub, capsys, ["--publish", "--source", str(bac.source),
+                                          "--target", str(bac.target), "--wrapper", str(bac.wrapper),
+                                          "--require-env", REQUIRE_ENV_VALUE,
+                                          "--home", str(bac.home)])
+    finally:
+        os.chmod(bac.target, 0o644)
+    assert rc == EXIT_ERROR, f"cible en 0444 : rc={rc}\nstdout={out}\nstderr={err}"
+    assert "ERREUR écriture impossible" in out, f"le refus doit dire l'échec d'écriture : {out!r}"
+    assert str(bac.target) in out, f"le refus doit nommer la cible : {out!r}"
+    assert "PermissionError" in out, f"le refus doit nommer la cause réelle : {out!r}"
+    assert "publication établie" not in out, f"aucun faux succès : {out!r}"
+    assert err.strip(), f"le refus doit être bruyant sur stderr : {err!r}"
+    assert bac.target_sha == avant, "la cible non inscriptible doit rester intacte"
+
+
 # ------------------------------------------------------------------------ limite ---
+
+def test_limit_un_wrapper_au_chemin_absent_refuse_avant_toute_cible(pub, tmp_path, capsys):
+    """S2 : un `--wrapper` dont le chemin est ABSENT refuse AVANT toute cible, dans les deux modes.
+
+    Forme limite de la garde wrapper : le chemin n'existe pas (`FileNotFoundError`), là où le cas
+    de lecture du wrapper en dossier levait `IsADirectoryError`. La conséquence doit être la même —
+    rc 2, le chemin du wrapper nommé, la cause nommée — et la cible, absente ou divergente, doit
+    rester telle quelle : le refus précède la résolution des cibles, pas seulement l'écriture.
+
+    Le témoin d'inexistence est explicite : la cible passée en `--publish` n'existe pas avant, et
+    doit encore ne pas exister après."""
+    bac = _Bac(tmp_path).write(installed=DIVERGENT_1)
+    absent = tmp_path / "wrapper_absent.sh"
+    assert not absent.exists(), "ancre : le chemin du wrapper doit être absent"
+    cible_absente = tmp_path / "installee_absente.py"
+    avant = bac.target_sha
+    for mode in ("--check", "--publish"):
+        rc, out, err = _run(pub, capsys, [mode, "--source", str(bac.source),
+                                          "--target", str(cible_absente), "--wrapper", str(absent),
+                                          "--require-env", REQUIRE_ENV_VALUE,
+                                          "--home", str(bac.home)])
+        assert rc == EXIT_ERROR, f"{mode} wrapper absent : rc={rc}\nstdout={out}\nstderr={err}"
+        assert "wrapper illisible" in out, f"{mode} : le refus doit dire l'illisible : {out!r}"
+        assert str(absent) in out, f"{mode} : le refus doit nommer le chemin du wrapper : {out!r}"
+        assert "FileNotFoundError" in out, f"{mode} : la cause réelle doit être nommée : {out!r}"
+        assert str(cible_absente) not in out, \
+            f"{mode} : le refus doit précéder toute cible (aucune cible n'est atteinte) : {out!r}"
+        assert err.strip(), f"{mode} : le refus doit être bruyant sur stderr : {err!r}"
+    assert not cible_absente.exists(), "le refus doit précéder toute écriture (cible jamais créée)"
+    assert bac.target_sha == avant, "la copie installée divergente doit rester intacte"
+
 
 def test_limit_le_home_vide_retombe_sur_le_repertoire_personnel_du_processus(pub, tmp_path,
                                                                             capsys, monkeypatch):
