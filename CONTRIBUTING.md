@@ -1,142 +1,142 @@
 # Contributing
 
-Merci de l'intérêt. Ce dépôt est un **pipeline d'agents** : les règles de contribution
-portent surtout sur ce qui doit rester **déterministe** et **vérifiable**.
+Thanks for your interest. This repository is an **agent pipeline**: the contribution
+rules mostly concern what must stay **deterministic** and **verifiable**.
 
 ---
 
-## Avant de proposer une modification
+## Before proposing a change
 
-### 1. Ouvrir une issue
+### 1. Open an issue
 
-Toute modification non triviale commence par une issue. Décrivez :
+Every non-trivial change starts with an issue. Describe:
 
-- le **symptôme observé** (pas seulement la solution souhaitée) ;
-- la **commande exacte** qui le reproduit et sa sortie réelle ;
-- le comportement attendu.
+- the **observed symptom** (not just the desired solution);
+- the **exact command** that reproduces it and its real output;
+- the expected behaviour.
 
-> Une PR qui corrige un bug doit pouvoir citer **la ligne exacte** où le bug se
-> manifeste. Une PR dont la prémisse ne tient pas contre le code sera refusée, même
-> bien écrite.
+> A PR that fixes a bug must be able to cite **the exact line** where the bug
+> shows up. A PR whose premise does not hold against the code will be refused,
+> however well written.
 
-### 2. Vérifier le chevauchement
+### 2. Check for overlap
 
-Avant d'ouvrir une nouvelle issue, cherchez-en une qui couvre déjà le sujet
-(ouverte ou avec une PR ouverte). Ce dépôt applique lui-même cette règle : son pont
-GitHub bloque l'import d'une issue qui recouvre du travail en vol.
+Before opening a new issue, look for one that already covers the topic
+(open, or with an open PR). This repository applies that rule to itself: its
+GitHub bridge blocks the import of an issue that overlaps in-flight work.
 
 ---
 
-## Règles de conception (non négociables)
+## Design rules (non-negotiable)
 
-### Le mécanique est scripté, sans LLM
+### What is mechanical is scripted, without an LLM
 
-Tout ce qui peut être déterministe le reste : import d'issues, construction de graphe,
-linters, portes de qualité. **Un pipeline au repos doit coûter zéro token.** Le LLM
-n'intervient que là où il faut juger (rédiger une spec, arbitrer une ambiguïté).
+Everything that can be deterministic stays so: issue import, graph building,
+linters, quality gates. **An idle pipeline must cost zero tokens.** The LLM steps
+in only where judgement is required (writing a spec, arbitrating an ambiguity).
 
-Une PR qui ajoute un appel LLM sur un chemin mécanique sera refusée.
+A PR that adds an LLM call on a mechanical path will be refused.
 
-### Une porte de qualité s'éprouve dans les DEUX sens
+### A quality gate is exercised in BOTH directions
 
-Un contrôle qui ne teste qu'un cas sain ne prouve rien (scope ignoré, rapport absent,
-exclusion trop large). Toute porte doit être livrée avec :
+A check that only tests a healthy case proves nothing (scope ignored, report
+missing, exclusion too broad). Every gate must ship with:
 
-1. un cas **sain** → exit 0, muet ;
-2. un cas **fautif** → exit 1, avec un message actionnable.
+1. a **healthy** case → exit 0, silent;
+2. a **faulty** case → exit 1, with an actionable message.
 
-Les deux doivent être dans la suite de tests.
+Both must be in the test suite.
 
-### Un filtre par motif filtre en GÉNÉRAL, jamais par liste fermée
+### A pattern filter filters GENERALLY, never by a closed list
 
-Un linter qui exclut `^t[1-6]\b` transforme toute étape ajoutée ensuite (`t3b`, `t4a`)
-en faux positif **précisément au moment où on ajoute une étape**. Écrire le motif
-général (`^t\d+[a-z]?\b`).
+A linter that excludes `^t[1-6]\b` turns every step added later (`t3b`, `t4a`)
+into a false positive **precisely when a step is added**. Write the general
+pattern (`^t\d+[a-z]?\b`).
 
-### Un gate déterministe vaut par son PÉRIMÈTRE
+### A deterministic gate is only worth its SCOPE
 
-Un contrôle qui scanne tout le dépôt signale le contenu **préexistant** : il devient
-inutilisable et se fait désactiver au lieu d'être corrigé. Restreindre à la zone où la
-convention s'applique (les répertoires du vault, pas tout `docs/` ; les fichiers du
-diff, pas tout le repo).
+A check that scans the whole repository reports **pre-existing** content: it
+becomes unusable and gets disabled instead of fixed. Restrict it to the area the
+convention applies to (the vault directories, not all of `docs/`; the files in the
+diff, not the whole repo).
 
-### Pas de chemin en dur, pas de variable en dur
+### No hardcoded path, no hardcoded variable
 
-- Jamais `/home/<user>/...` : résoudre depuis `Path(__file__)` ou une variable
-  documentée.
-- Jamais d'identifiant d'environnement (canal Discord, guild) dans le code : variable
-  d'environnement, avec valeur par défaut vide.
-- Jamais d'exécutable par chemin absolu supposé : `shutil.which()` puis une liste de
-  candidats **vérifiés** (`isfile` + `X_OK`).
+- Never `/home/<user>/...`: resolve from `Path(__file__)` or a documented
+  variable.
+- Never an environment identifier (Discord channel, guild) in the code: use an
+  environment variable, with an empty default.
+- Never an executable assumed by absolute path: `shutil.which()` then a list of
+  **verified** candidates (`isfile` + `X_OK`).
 
-> Un cron n'a pas le PATH interactif. Un chemin en dur qui marche dans votre shell
-> échoue en production, silencieusement.
+> A cron has no interactive PATH. A hardcoded path that works in your shell
+> fails in production, silently.
 
-### Le sens des liens kanban est `link <parent> <child>` — l'enfant ATTEND le parent
+### The direction of kanban links is `link <parent> <child>` — the child WAITS for the parent
 
-Une carte de synthèse se construit **à l'envers** (chaque production est parent de la
-synthèse). Jamais `--parent <synthèse>` sur une de ses entrées : deadlock.
+A synthesis card is built **backwards** (each production is a parent of the
+synthesis). Never `--parent <synthesis>` on one of its inputs: deadlock.
 
-### Les cartes de pipeline se créent mécaniquement
+### Pipeline cards are created mechanically
 
-Ne jamais créer à la main les cartes qu'un script sait construire (graphe `t1..t5`,
-slices, worktrees). Un graphe écrit à la main dérive de la spec ; un graphe construit
-depuis `slices.json` est vérifiable.
+Never create by hand the cards a script knows how to build (the `t1..t5` graph,
+slices, worktrees). A hand-written graph drifts from the spec; a graph built from
+`slices.json` is verifiable.
 
 ---
 
 ## Tests
 
 ```bash
-python3 -m pytest tests/ -q      # doit afficher 113 passed
+python3 -m pytest tests/ -q      # must print 113 passed
 ```
 
-- Les tests chargent leurs modules **depuis ce dépôt** (chemins relatifs via `REPO`),
-  jamais depuis un emplacement externe. Un test qui lit `/home/<user>/...` passe sur la
-  machine de son auteur et échoue partout ailleurs.
-- Pas de test « change-detector » (qui fige une valeur destinée à changer : comptage,
-  catalogue, numéro de version).
-- Un test qui lit le **texte source** d'un fichier est refusé : il teste la forme, pas
-  le comportement. Extraire la logique dans une fonction pure et l'appeler.
-- Toute correction de bug arrive avec un test **invariant** qui échoue sur le code
-  d'avant.
+- The tests load their modules **from this repository** (relative paths via
+  `REPO`), never from an external location. A test that reads `/home/<user>/...`
+  passes on its author's machine and fails everywhere else.
+- No "change-detector" test (one that pins a value meant to change: a count, a
+  catalogue, a version number).
+- A test that reads a file's **source text** is refused: it tests the form, not
+  the behaviour. Extract the logic into a pure function and call it.
+- Every bug fix comes with an **invariant** test that fails on the previous
+  code.
 
-### Vérifier qu'un test échoue bien pour la bonne raison
+### Checking that a test really fails for the right reason
 
-Un test vert ne prouve pas qu'il teste ce qu'il prétend. Contre-épreuve utile : masquer
-ou déplacer la ressource testée et vérifier que la suite échoue — sinon le test lisait
-autre chose.
+A green test does not prove that it tests what it claims. A useful counter-check:
+hide or move the resource under test and verify that the suite fails — otherwise
+the test was reading something else.
 
 ---
 
-## Assainissement (dépôt public)
+## Sanitisation (public repository)
 
-**Aucun secret, aucune donnée d'infrastructure, aucun identifiant d'environnement.**
-Avant de pousser :
+**No secret, no infrastructure data, no environment identifier.**
+Before pushing:
 
 ```bash
-# clés, tokens, IP privées, chemins personnels, identifiants Discord
+# keys, tokens, private IPs, personal paths, Discord identifiers
 grep -rnE "sk-[A-Za-z0-9_-]{10,}|/home/[a-z]+|[0-9]{17,19}" --include="*.py" --include="*.md" .
 ```
 
-Les secrets vivent dans `~/.hermes/profiles/<profil>/.env`, **hors de ce dépôt**.
-`config.yaml.example` est assaini : il ne contient que des placeholders `${VAR}`.
+Secrets live in `~/.hermes/profiles/<profile>/.env`, **outside this repository**.
+`config.yaml.example` is sanitised: it holds only `${VAR}` placeholders.
 
 ---
 
-## Commits et PR
+## Commits and PRs
 
-- Un commit par intention, message à l'impératif, expliquant le **pourquoi**.
-- La PR référence l'issue (`Closes #N`) — sans cette ligne, GitHub ne lie pas la PR à
-  l'issue et la fermeture dépend d'un seul mécanisme.
-- **L'agent ne merge jamais.** Le merge est une décision humaine.
-- Une PR qui touche une porte de qualité doit montrer les **deux** cas (sain/fautif)
-  dans sa description.
+- One commit per intent, message in the imperative, explaining the **why**.
+- The PR references the issue (`Closes #N`) — without that line, GitHub does not
+  link the PR to the issue and closure depends on a single mechanism.
+- **The agent never merges.** Merging is a human decision.
+- A PR that touches a quality gate must show **both** cases (healthy/faulty)
+  in its description.
 
 ---
 
-## Signaler un problème de conception
+## Reporting a design flaw
 
-Les règles ci-dessus viennent de défauts observés en production. Si vous en découvrez
-un nouveau, documentez-le : **le symptôme, la cause racine vérifiée dans le code, et
-la règle qui l'aurait empêché.** C'est ainsi que ce fichier a été écrit.
+The rules above come from defects observed in production. If you discover a new
+one, document it: **the symptom, the root cause verified in the code, and the rule
+that would have prevented it.** That is how this file was written.
