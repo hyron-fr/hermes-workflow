@@ -15,10 +15,57 @@ décide de l'itération (`goto`) ou de la sortie.
   cache d'état, CLI `run`/`list`)
 - `pipeline/backends.py` — backends d'exécution agentique (hermes / dsh /
   claude) + extraction JSON robuste
+- `pipeline/pj_escalate.py` — escalade des cartes bloquées vers le thread Discord
+  de leur issue (voir ci-dessous)
 - `workflows/spec.yaml` — premier workflow de validation (phase **spec**)
 - `workflows/smoke.yaml` — workflow de test minimal (1 étape agentique dsh)
 - `workflows/schemas/*.json` — schémas JSON des sorties structurées
 - `workflows/templates/ticket.md` — template de ticket (check déterministe)
+
+## Outil d'escalade `pj_escalate.py`
+
+Remonte les cartes kanban **bloquées** vers le fil Discord de leur issue GitHub.
+Déterministe (0 LLM), idempotent par `(carte, dernier event de blocage)`, déclenché
+par un cron `no_agent` global (`main()` itère les boards `pj-*`, donc **sans**
+suffixe de repo dans son wrapper).
+
+Toute sa configuration vient de l'environnement — aucun identifiant, aucun chemin
+de machine dans le fichier. Trois variables sont **requises**, les autres sont
+**optionnelles** avec un défaut dérivé du répertoire personnel :
+
+| variable | statut | défaut |
+|---|---|---|
+| `PJ_ESCALATE_CHANNEL_ID` | **requise** | — (canal des threads d'issue) |
+| `PJ_ESCALATE_USER_ID` | **requise** | — (destinataire des décisions) |
+| `PJ_ESCALATE_GUILD_ID` | **requise** | — |
+| `PJ_ESCALATE_REPOS_ROOT` | optionnelle | `$HOME/pj-repos` |
+| `PJ_ESCALATE_STATE_DIR` | optionnelle | `$HOME/.hermes/state` |
+| `PJ_ESCALATE_THREAD_HELPER` | optionnelle | `$HOME/.hermes/scripts/discord_thread.py` |
+| `PJ_ESCALATE_ORG` | optionnelle | `hyron-fr` |
+| `PJ_ESCALATE_GH_BIN` | optionnelle | résolution `shutil.which` + candidats vérifiés |
+
+**Une requise absente ou VIDE refuse le tick bruyamment** : `ConfigError`, message
+sur la sortie d'erreur nommant la variable, code de sortie `2`, aucun envoi, aucune
+écriture d'état. Une valeur vide n'est jamais un identifiant (mesuré : `target=""`
+fait échouer le post, l'état n'avance pas, et le même message est reposté à chaque
+tick, indéfiniment). Le répertoire d'état est validé par une **sonde d'écriture**
+au tout début du tick, avant tout scan de board : sinon un `PermissionError` local
+n'arrive qu'après que les boards précédents ont posté.
+
+`PJ_ESCALATE_GH_BIN` est le seul cas où « posée vide » est un état **légitime** :
+elle exprime « garde indisponible, escalade bruyante » — l'avertissement part, le
+tick continue. Une variable **absente**, à l'inverse, laisse la résolution par
+candidats vérifiés faire son travail.
+
+Les identifiants Discord ne sont **jamais** écrits dans le dépôt (public) : le
+wrapper `agents/pj-master/scripts/pj_escalate_all.sh` lit les `PJ_ESCALATE_*` du
+`.env` **du profil** (`~/.hermes/profiles/<profil>/.env`, hors dépôt) et les
+exporte vers le tick, en n'exportant **que** ce préfixe.
+
+Les entrées-sorties passent par des points d'injection (`runner` pour les
+sous-processus, `poster` pour l'envoi Discord, `conn_factory` pour la base kanban ;
+défaut = implémentation réelle) : le tick complet s'exerce sans réseau et sans
+exécutable réel.
 
 ## Schéma d'un workflow
 

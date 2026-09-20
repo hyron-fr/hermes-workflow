@@ -15,6 +15,11 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-1]] — Vérifier le cycle complet du pipeline (issue de test du framework).
 - [[issue-1-verification-contract]] — Contrat de vérification de #1 (protocole C1..C6, provenance des 4 maillons, verdict de convergence).
 - [[issue-5]] — Interface de décision humaine pour les cartes bloquées (Discord + GitHub uniquement).
+- [[issue-4]] — Versionner pj_escalate.py (pipeline/) : garde-fou d'état d'issue + résolution de binaire hors PATH.
+
+## Décisions (ADR)
+
+_(peuplé par la carte `doc-k` : chaque ADR sous `decisions/` doit être référencé ici, sinon `pj_docs_lint.py` le signale orphelin.)_
 
 ## Composants
 
