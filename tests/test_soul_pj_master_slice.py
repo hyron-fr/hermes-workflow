@@ -108,7 +108,12 @@ autre autres doit doivent peut peuvent fait faire avoir ont meme non
 # witness printed by the test); one or two stray words are not judged.
 FR_THRESHOLD = 3
 
-TOKEN_RE = re.compile(r"[a-z]+")
+# Token = a whole word, where a HYPHEN counts as a word character. Without this guard a
+# hyphenated English compound splits into French-looking fragments: `non-blocking` yields
+# the token `non`, `de-facto` yields `de` — both are in FR_ONLY and would manufacture flags
+# on correct English technical prose. Measured need, not theory: this document family writes
+# `non-prose`, `non-blocking`, `de-facto`.
+TOKEN_RE = re.compile(r"(?<![-\w])[a-z]+(?![-\w])")
 CODE_SPAN_RE = re.compile(r"`[^`]*`")
 URL_RE = re.compile(r"https?://\S+")
 # A QUOTED FRENCH TERM is a citation, not prose: the English note `issue-2.md` illustrates
@@ -486,8 +491,13 @@ def test_nominal_the_slice_documents_the_english_gate_titles():
         "the prescribed edit (four French titles -> English) must GREEN the check: it "
         "reported missing=%r, French left=%r" % (miss_ok, fr_ok))
 
-    retire = traduit.replace("## Acceptance criteria", "## Acceptance", 1)
-    assert sha256(retire) != sha256(traduit), "the removal was not applied"
+    # The removal must target a form that really exists in `traduit` (measured: the title
+    # is written `### 2. Acceptance criteria (BDD / Gherkin)`), and its application is
+    # certified by the hash before the expectation is read — a mutation that does not bite
+    # is a harness failure, never a pass.
+    retire = traduit.replace("Acceptance criteria", "Acceptance", 1)
+    assert sha256(retire) != sha256(traduit), (
+        "the removal was not applied: the literal does not occur in the simulated document")
     assert title_problems(retire)[0] == ["Acceptance criteria"], (
         "dropping an English title must be reported, got %r" % title_problems(retire)[0])
     print("witness titles: %d lines judged; reference reports %r ; prescribed edit -> "
@@ -591,8 +601,18 @@ def test_limite_unaccented_french_prose_is_flagged_and_the_scan_cannot_see_it(tm
     # naive inside/outside toggle then declares the rest of the page "inside a fence" and
     # would blank 122 of the reference's 133 French lines.)
     #
-    # The citation rule must also DISCRIMINATE, measured in the same run: the two lines
-    # below differ ONLY by their quote marks.
+    # Three hardening cases, executed here, because each was a MEASURED false-positive
+    # shape on this document family and a detector that fires on correct English sends a
+    # correct translation into rework:
+    #   (a) hyphenated English compounds must not split into French fragments;
+    #   (b) short quoted citations must not count as prose;
+    #   (c) the same words UNQUOTED must fire — else the rule is a word list, not a rule.
+    for eng in ("This is a non-prose block, a de-facto guardrail, an end-to-end check.",
+                "The gate reports a non-blocking warning on the co-authored file."):
+        assert not fr_tokens(eng), (
+            "an English line with a hyphenated compound must not flag (fragments `non`, "
+            "`de`, `co`, `end` are in FR_ONLY): %r -> %r" % (eng, fr_tokens(eng)))
+
     cite = "The note cites « dans », « pour », « rien » as examples of the blind spot."
     assert not fr_tokens(cite), (
         "a short quoted citation must not count as prose: %r" % fr_tokens(cite))
