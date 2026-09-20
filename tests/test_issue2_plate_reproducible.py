@@ -1035,6 +1035,277 @@ def test_limite_la_planche_n_affirme_pas_que_le_linter_de_l_arbre_est_deja_bilin
     )
 
 
+# =====================================================================================
+# FAMILLES DE REFUS — le banc juge un ENSEMBLE de familles, jamais un DÉCOMPTE TOTAL
+# =====================================================================================
+#
+# Mesure `13-falsifiabilite.txt` §B (convergence `t_c20aecf3`, mutations COMMITÉES dans des
+# clones jetables) : comparer un DÉCOMPTE TOTAL laisse passer deux affaiblissements du linter
+#
+#   B2  la famille « section » disparaît (carte non conforme : 10 refus -> 6)
+#       => banc rc=0, 27 passed
+#   B3  le contrôle DoR est retiré alors que la section « DoR & DoD » reste présente
+#       => banc rc=0, 27 passed
+#
+# Aucun des deux n'est vu par un DÉCOMPTE TOTAL, et pourtant chacun tue une famille ENTIÈRE de
+# refus : la carte à un seul titre passe de 10 refus à 6 sans que le total paraisse anormal.
+# Le trou est STRUCTUREL, pas rédactionnel : un total peut rester plausible alors qu'un
+# contrôle a disparu. Le banc gèle donc la LISTE DES FAMILLES ATTEIGNABLES, jamais leur somme.
+#
+# Les sondes sont INDÉPENDANTES DE LA LANGUE (carte vide, carte à un seul titre EN et FR,
+# garde-fou retiré, sections hors ordre) : le bilinguisme fait TOMBER les faux positifs de la
+# carte anglaise conforme, il ne DÉPLACE pas les familles atteignables — mesuré identiques
+# avant la bascule bilingue (`828a595`) et au tip (`d2ef94c`). Ce qui peut changer, c'est le
+# LIBELLÉ d'un message : c'est la FAMILLE qui est gelée, pas la phrase, et `CLASSEMENT_REFUS`
+# est le SEUL endroit à tenir à jour quand une phrase change.
+
+FAMILLES_ATTENDUES = frozenset({
+    "body_vide",           # sortie précoce : carte vide
+    "section",             # section manquante, ou sections hors ordre
+    "gherkin_bloc",        # pas de bloc « Fonctionnalité: / Feature: »
+    "gherkin_scenarios",   # moins de 2 scénarios
+    "gherkin_etapes",      # moins de 3 étapes Étant donné/Quand/Alors
+    "DoR",                 # contrôle DoR (le mot-clé, pas la section) retiré
+    "DoD",                 # contrôle DoD retiré
+    "garde_fou",           # aucun interdit explicite
+})
+
+# Le seul point couplé au LIBELLÉ : chaque motif est tolérant aux DEUX langues (messages
+# français avant `d2ef94c`, anglais au tip), pour que le banc ne rougisse pas d'un progrès.
+CLASSEMENT_REFUS = (
+    ("body_vide", re.compile(r"^\s*(?:body vide|empty body)\s*$", re.I)),
+    ("section", re.compile(r"^\s*(?:missing section|section manquante|"
+                           r"sections (?:out of order|dans le désordre))", re.I)),
+    ("gherkin_bloc", re.compile(r"gherkin.*(?:bloc|block)", re.I)),
+    ("gherkin_scenarios", re.compile(r"(?:sc[eé]nario|scenario)\(s\)", re.I)),
+    ("gherkin_etapes", re.compile(r"(?:[eé]tape|step)\(s\)", re.I)),
+    ("DoR", re.compile(r"^\s*DoR\s+(?:absent|missing)\s*$", re.I)),
+    ("DoD", re.compile(r"^\s*DoD\s+(?:absent|missing)\s*$", re.I)),
+    ("garde_fou", re.compile(r"garde-fous|guardrails", re.I)),
+)
+
+# Carte FRANÇAISE conforme dont l'ordre 1→5 est rompu : la seule famille « section » rend,
+# par la branche « hors ordre » — une route que la carte à un seul titre n'exerce pas.
+CARTE_HORS_ORDRE_FR = (
+    "## 2. Critères d'acceptation\n```gherkin\nFonctionnalité: x\n  Scénario: nominal\n"
+    "    Étant donné a\n    Quand b\n    Alors c\n  Scénario: limite\n    Étant donné d\n"
+    "    Quand e\n    Alors f\n```\n\n"
+    "## 1. Contexte & Objectif\nBut.\n\n"
+    "## 3. DoR & DoD\nDoR : rien. DoD : tout.\n\n"
+    "## 4. Considérations techniques\nInterdit de toucher l'ancre.\n\n"
+    "## 5. Hors-scope\nRien.\n"
+)
+
+SONDES_FAMILLES = (
+    ("carte_vide", ""),
+    ("un_seul_titre_EN", "## 1. Context & Objective\nGoal only.\n"),
+    ("un_seul_titre_FR", "## 1. Contexte & Objectif\nBut seul.\n"),
+    ("garde_fou_retire_FR",
+     CARTE_LINTER_FR.replace("Interdit de toucher l'ancre.", "Toucher l'ancre est permis.")),
+    ("sections_hors_ordre_FR", CARTE_HORS_ORDRE_FR),
+)
+
+COPIES_LINTER = (
+    "pipeline/pj_card_lint.py",
+    "agents/pj-master/scripts/pj_card_lint.py",
+    "skills/pj-pipeline/scripts/pj_card_lint.py",
+)
+
+# Le cas nominal, seul nommé ici : les mutations ci-dessous l'exécutent à distance, et le
+# sélecteur `-k` ne doit atteindre QUE lui (sinon un clone récursif s'appellerait lui-même).
+CAS_FAMILLES = "les_familles_de_refus_atteignables_sont_gelees"
+
+# Garde anti-récursion : la mutation exécute le banc SUR un clone ; si ce banc-là pouvait à son
+# tour muter, chaque niveau en engendrerait un autre. Les cas de mutation sont donc sautés
+# dans un banc lancé DEPUIS une mesure de mutation.
+ENV_MUTATION = "PJ_BANC_MUTATION"
+
+
+def _famille_de(message):
+    """Famille d'un message de refus, ou None si le libellé n'est pas classé.
+
+    Un message inclassable ne fait pas échouer ce cas directement : il fait DISPARAÎTRE une
+    famille de l'ensemble atteint, et c'est l'assertion d'ensemble qui le dit — en nommant
+    la famille perdue, donc en nommant le message à reclasser.
+    """
+    for nom, motif in CLASSEMENT_REFUS:
+        if motif.search(message):
+            return nom
+    return None
+
+
+def _familles_par_sonde(lint):
+    """[(sonde, nb de refus, familles)] plus les messages NON CLASSÉS (à reclasser)."""
+    table, inclasses = [], []
+    for nom, body in SONDES_FAMILLES:
+        constat = lint({"body": body, "title": "sonde"})
+        familles = set()
+        for message in constat:
+            famille = _famille_de(message)
+            if famille is None:
+                inclasses.append("%s : %r" % (nom, message))
+            else:
+                familles.add(famille)
+        table.append((nom, len(constat), frozenset(familles)))
+    return table, inclasses
+
+
+def test_nominal_les_familles_de_refus_atteignables_sont_gelees(clone_tip):
+    """Nominal — les 3 copies du tip rendent l'ENSEMBLE gelé des familles de refus.
+
+    C'est l'assertion qui ferme les deux trous mesurés : un linter peut perdre une famille
+    entière de refus (B2) ou un contrôle nommé (B3) en gardant un décompte TOTAL plausible.
+    Ici la comparaison porte sur la LISTE, donc chacune des deux pertes est nommée.
+
+    Trois gardes de non-vacuité, sans lesquelles le cas serait tautologique :
+
+    1. l'ensemble atteint doit être NON VIDE (un `lint` muet — mutation B1 — le vide, et
+       « aucune famille perdue » serait alors vrai à tort) ;
+    2. chaque sonde doit rendre AU MOINS un refus : une sonde devenue muette ne prouve plus
+       rien sur la famille qu'elle visait ;
+    3. chaque famille attendue doit être RÉELLEMENT atteignable : une famille qu'aucune sonde
+       n'atteint ne serait pas gélée, seulement absente — et sa perte passerait inaperçue.
+    """
+    rapport, ecarts, inclasses = [], [], []
+    for rel in COPIES_LINTER:
+        mod = _charge_linter(clone_tip["dir"] / rel, nom="fam_" + rel.replace("/", "_"))
+        table, non_classes = _familles_par_sonde(mod.lint)
+        inclasses.extend("%s : %s" % (rel, m) for m in non_classes)
+        atteintes = set()
+        for _, _, familles in table:
+            atteintes |= familles
+        perdues = FAMILLES_ATTENDUES - atteintes
+        if perdues:
+            ecarts.append("%s : familles de refus PERDUES %s" % (rel, sorted(perdues)))
+        for nom, n_refus, familles in table:
+            rapport.append((rel, nom, n_refus, sorted(familles)))
+            if n_refus == 0:
+                ecarts.append("%s : la sonde %r ne rend AUCUN refus — sonde devenue muette, "
+                              "elle ne prouve plus rien" % (rel, nom))
+        print("witness familles %s (tip %s) : %s"
+              % (rel, clone_tip["head"][:10],
+                 " | ".join("%s=%s" % (n, f) for _, n, _, f in
+                            [r for r in rapport if r[0] == rel])))
+
+    assert not ecarts, (
+        "le linter de l'arbre a perdu des FAMILLES de refus : un décompte total peut rester "
+        "plausible après la disparition d'un contrôle, pas cette liste.\n  - "
+        + "\n  - ".join(ecarts)
+        + ("\n  messages non classés (reclasser dans CLASSEMENT_REFUS) :\n  - "
+           + "\n  - ".join(inclasses) if inclasses else "")
+    )
+    for rel in COPIES_LINTER:
+        atteintes = frozenset().union(*[set(f) for r, _, _, f in rapport if r == rel])
+        assert atteintes, (
+            "%s : aucune famille de refus atteignable — un linter muet n'est pas un linter "
+            "conforme" % rel)
+    print("witness familles gelées : %d familles attendues %s"
+          % (len(FAMILLES_ATTENDUES), sorted(FAMILLES_ATTENDUES)))
+
+
+# Mutations JETABLES, écrites en clair parce qu'elles sont le SUJET des deux cas suivants :
+# chacune reproduit, à l'observable, une des deux pertes mesurées par `13-falsifiabilite.txt`.
+# Elles s'ajoutent AU MODULE (append) au lieu de réécrire son corps : la mutation ne dépend
+# donc d'aucun numéro de ligne ni d'aucune indentation du fichier mué.
+MUTATION_SANS_FAMILLE = """
+# ------------------------------------------------------------------------------------
+# MUTATION JETABLE — modèle B2 : la famille %(motif)r de refus NE REND PLUS RIEN.
+# Mesure d'origine : carte non conforme 10 refus -> 6, banc d'AVANT rc=0 / 27 passed.
+# ------------------------------------------------------------------------------------
+_LINT_ORIGINAL = lint
+
+
+def lint(task):  # noqa: F811 — la fonction du module est remplacée par sa version mutée
+    return [m for m in _LINT_ORIGINAL(task) if %(motif)r not in m.lower()]
+"""
+
+
+def _banc_sur_mutation(clone_tip, tmp_path, motif, famille_visee, libelle):
+    """Mute les 3 copies, COMMITE dans un clone jetable, exécute le banc DESSUS.
+
+    Le commit n'est pas un détail de protocole : le banc juge l'état COMMITÉ (ses fixtures
+    clonent HEAD). Une mutation de sonde non committée est INVISIBLE — mesuré : restauration
+    sans commit -> 27 passed ; la même restauration committée -> 1 failed. Une mutation non
+    committée ne prouverait donc rien, et c'est la première chose que ce cas vérifie.
+
+    Rend (rc, sortie) du banc exécuté dans le clone.
+    """
+    d = tmp_path / "clone_mutation"
+    shutil.copytree(clone_tip["dir"], d)
+    for rel in COPIES_LINTER:
+        chemin = d / rel
+        assert chemin.is_file(), "copie absente du clone : %s" % rel
+        with chemin.open("a", encoding="utf-8") as f:
+            f.write(MUTATION_SANS_FAMILLE % {"motif": motif})
+    # 1. la mutation est RÉELLE et l'arbre est SALE (elle n'est pas encore committée) ;
+    sale = git(d, "status", "--porcelain").strip().splitlines()
+    assert len(sale) == len(COPIES_LINTER), (
+        "la mutation doit toucher les %d copies, touchées : %r" % (len(COPIES_LINTER), sale))
+    git(d, "-c", "user.name=banc", "-c", "user.email=banc@local", "add", "-A")
+    git(d, "-c", "user.name=banc", "-c", "user.email=banc@local", "commit",
+        "-q", "-m", "mutation jetable du banc : %s" % libelle)
+    assert not git(d, "status", "--porcelain").strip(), (
+        "la mutation doit être COMMITTÉE : le banc juge l'état committé, pas le disque")
+
+    # 2. le banc EST EXÉCUTÉ dans ce clone. Le sélecteur ne garde QUE le cas nominal : sans
+    #    cela, les cas de mutation du clone s'appelleraient eux-mêmes, sans fin.
+    env = dict(os.environ, **{ENV_MUTATION: "1"})
+    p = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_issue2_plate_reproducible.py",
+         "-q", "-p", "no:randomly", "-k", CAS_FAMILLES],
+        capture_output=True, text=True, cwd=str(d), env=env,
+    )
+    print("witness mutation %s (motif %r, commit %s) : rc=%d\n%s"
+          % (libelle, motif, git(d, "rev-parse", "--short", "HEAD").strip(),
+             p.returncode, "\n".join(
+                 l for l in (p.stdout + p.stderr).splitlines() if l.strip())[:1500]))
+    return p.returncode, p.stdout + p.stderr
+
+
+def _verifie_mutation(rc, sortie, famille_visee, libelle):
+    """Le banc du clone doit être ROUGE et NOMMER la famille qu'il a perdue."""
+    assert rc != 0, (
+        "le banc reste VERT (rc=0) alors que %s : c'est exactement le trou mesuré — un "
+        "décompte total ne voit pas la disparition d'une famille.\n%s" % (libelle, sortie))
+    assert "no tests ran" not in sortie and "deselected" not in sortie, (
+        "le banc n'a pas exécuté le cas de gel des familles (sélecteur %r) : un banc SAUTÉ ne "
+        "prouve rien, et son rc=5 est un rc d'ERREUR de collecte, pas un rouge de fond.\n%s"
+        % (CAS_FAMILLES, sortie))
+    assert famille_visee in sortie, (
+        "le rouge doit NOMMER la famille perdue %r :\n%s" % (famille_visee, sortie))
+    assert "PERDUES" in sortie, (
+        "le rouge doit nommer l'écart comme une PERTE de famille :\n%s" % sortie)
+    print("witness %s : banc ROUGE (rc=%d) et nomme la famille perdue %r"
+          % (libelle, rc, famille_visee))
+
+
+@pytest.mark.skipif(os.environ.get(ENV_MUTATION) == "1",
+                    reason="banc lancé DEPUIS une mesure de mutation : pas de seconde mutation")
+def test_limite_la_perte_d_une_famille_de_refus_est_detectee_par_le_banc(clone_tip, tmp_path):
+    """Limite — la perte d'une FAMILLE entière (modèle B2) rend le banc ROUGE.
+
+    La mutation est COMMITÉE dans un clone jetable, puis le banc y est RÉELLEMENT exécuté :
+    c'est la seule façon de prouver que le banc d'AVANT ne voyait rien et que celui d'APRÈS
+    voit. Mesure d'origine (banc d'AVANT) : 10 refus -> 6, rc=0, 27 passed.
+    """
+    rc, sortie = _banc_sur_mutation(clone_tip, tmp_path, "section", "section",
+                                    "famille section perdue (B2)")
+    _verifie_mutation(rc, sortie, "section", "perte de la famille « section »")
+
+
+@pytest.mark.skipif(os.environ.get(ENV_MUTATION) == "1",
+                    reason="banc lancé DEPUIS une mesure de mutation : pas de seconde mutation")
+def test_erreur_le_retrait_d_un_controle_est_detecte_par_le_banc(clone_tip, tmp_path):
+    """Erreur — le retrait d'un CONTRÔLE nommé (modèle B3, le contrôle DoR) rend le banc ROUGE.
+
+    Même protocole que la limite, sur l'autre classe d'affaiblissement mesurée : le contrôle
+    DoR disparaît alors que la section « DoR & DoD » reste présente — un décompte total garde
+    le même ordre de grandeur. Banc d'AVANT : rc=0, 27 passed.
+    """
+    rc, sortie = _banc_sur_mutation(clone_tip, tmp_path, "dor", "DoR",
+                                    "contrôle DoR retiré (B3)")
+    _verifie_mutation(rc, sortie, "DoR", "retrait du contrôle DoR")
+
 
 # --------------------------------------------------- branches du contrat non couvertes
 #
