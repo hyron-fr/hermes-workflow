@@ -1267,9 +1267,11 @@ def _verifie_mutation(rc, sortie, famille_visee, libelle):
     assert rc != 0, (
         "le banc reste VERT (rc=0) alors que %s : c'est exactement le trou mesuré — un "
         "décompte total ne voit pas la disparition d'une famille.\n%s" % (libelle, sortie))
-    assert "no tests ran" not in sortie and "deselected" not in sortie, (
-        "le banc n'a pas exécuté le cas de gel des familles (sélecteur %r) : un banc SAUTÉ ne "
-        "prouve rien, et son rc=5 est un rc d'ERREUR de collecte, pas un rouge de fond.\n%s"
+    assert re.search(r"\d+ failed", sortie), (
+        "le banc n'a pas ÉCHOUÉ sur le fond : sans `failed`, un rc non nul n'est qu'une erreur "
+        "de collecte (ou un banc sauté), pas la preuve que la perte est VUE.\n%s" % sortie)
+    assert "no tests ran" not in sortie, (
+        "le banc n'a exécuté aucun cas (sélecteur %r) : un banc sauté ne prouve rien.\n%s"
         % (CAS_FAMILLES, sortie))
     assert famille_visee in sortie, (
         "le rouge doit NOMMER la famille perdue %r :\n%s" % (famille_visee, sortie))
