@@ -63,3 +63,18 @@ locks.
 
 Slice 2 (issue #2): `pipeline/pj_lang_lint.py`,
 `pipeline/pj_lang_lint.exclusions.yaml`, `tests/test_lang_lint.py`.
+
+## Current state and the naming drift
+
+The exclusions file is named `pipeline/pj_lang_lint.exclusions.yaml`, and it is
+read by `pj_lang_lint.py`. `slices.json` declared a different name
+(`frozen_literals_file = pipeline/i18n_gate_terms.yaml`) that no reader ever
+opened — a name drift with no code effect: whoever follows `slices.json` looks
+for a file that does not exist and never sees the rule written in the file the
+scan actually reads. Amending that declaration belongs to pj-master, not to this
+note (see [[issue-2-datation]]).
+
+The scan is red today on the five files that no slice carries yet — the four
+`agents/*/SOUL.md` (335 accented lines) and
+`docs/architecture/context/issue-2.md` (5 accented lines, citations of the
+frozen contract). That red is a deadline, not a defect: see [[issue-2-datation]].

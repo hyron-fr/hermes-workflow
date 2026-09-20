@@ -14,6 +14,7 @@ Map of Content of the `docs/architecture/` vault. Every cadrage note
 
 - [[issue-1]] — Verify the complete pipeline cycle (framework test issue).
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
+- [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 
 ## Components
 
