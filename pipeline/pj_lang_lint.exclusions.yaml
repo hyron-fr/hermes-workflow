@@ -1,0 +1,29 @@
+# pj_lang_lint — frozen literals (machine protocols), verbatim.
+#
+# Read by pipeline/pj_lang_lint.py. Each entry declares ONE literal that must never
+# be translated, and cites the line that reads it, so the declaration can be re-read
+# by the script it names instead of being taken on trust.
+#
+# Scope, deliberately narrow: only the 2 machine protocols are frozen. The section
+# titles of the card contract and the linter's own messages are TRANSLATED by
+# slice 2 (human decision of 2026-09-20: the gate labels move to English and the
+# linter becomes bilingual) — listing them here would freeze a superseded call.
+#
+# Granularity is the SPAN, never the whole line: English prose that quotes a protocol
+# below stays clean, while a diacritic elsewhere on the same line is still reported.
+#
+# This file is written in ASCII on purpose: the scan adds every accented string found
+# here to the spans it removes, so prose in this file would silently widen the
+# exemptions.
+version: 1
+
+protocoles:
+  - litteral: "Importé depuis"
+    famille: protocole
+    lecteur: "pipeline/pj_pipeline_deployer.py:270"
+    aussi_lu_par: "pipeline/gh_kanban_bridge.py:308"
+    pourquoi: "bridge marker read by the importer; translating it makes the bridge silent, with no error"
+  - litteral: "ROOM:"
+    famille: protocole
+    lecteur: "pipeline/pj_room_keeper.py:76"
+    pourquoi: "machine-only room marker, anchored anywhere in the body, no human reader"
