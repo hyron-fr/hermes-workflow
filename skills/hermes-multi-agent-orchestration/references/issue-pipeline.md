@@ -164,12 +164,12 @@ a card (`if card.get("branch"): args += ["--branch", card["branch"]]`):
 without that `--branch`, the sibling cards share nothing and the peer programming is
 silently decoupled.
 
-**Write perimeters disjoint by contract.** Two workers in the same worktree only
-get in each other's way if they are allowed to: the test role writes ONLY inside the
-test tree, the implementation role ONLY inside the sources, and the blackboard
-freezes the `contract-<k>` key (API signatures, test paths) BEFORE either of them
-writes. Conflict or doubt → `kanban_block` on the faulty card, never a
-`--force` nor a merge of parallel branches.
+**Write perimeters disjoint by contract.** In one worktree the test role writes
+ONLY inside the test tree, the implementation role ONLY inside the sources, and the
+blackboard freezes the `contrat-<k>` key (API signatures, test paths) BEFORE either
+writes — a SHARED SCHEME, spelled the same in the pj-dev / pj-test / pj-master
+instruction files, so it stays verbatim. Conflict or doubt → `kanban_block` on the
+faulty card, never a `--force` nor a merge of parallel branches.
 
 **Documentation role — four phases, each a card.** (1) in spec: architectural
 framing (positioning in the existing system, crossing infrastructure /
