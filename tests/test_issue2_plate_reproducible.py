@@ -20,9 +20,24 @@ en cours d'écriture (une planche réécrite puis mesurée dans le même souffle
 Le banc ne fait confiance à AUCUN des deux fichiers : il recalcule les totaux depuis
 l'arbre avec sa propre définition de « ligne accentuée », puis confronte arbre ↔ registre
 ↔ prose de la planche.
+
+DATATION (arbitrage `t_ca894fd4`, décision 3) : le registre de la planche est un artefact
+DATÉ — il décrit l'arbre À UNE RÉVISION donnée. Jugé contre un arbre vivant, il produit un
+écart qui n'impute rien à personne : c'est un conflit d'échéance, pas un défaut. Ce banc
+date donc son propre jugement sous une clé d'arrimage GELÉE (`ANCRAGE_REVISION`) :
+
+- arbre À la clé      -> verdict DÉTERMINÉ : registre, prose et arbre sont confrontés ;
+- arbre HORS de la clé -> verdict INDÉTERMINÉ, qui NOMME la révision d'arrimage : le banc
+  ne prononce alors ni échec ni vert (`pytest.skip` nommé, jamais une assertion affaiblie) ;
+- clé irrésolue       -> `AncrageIrresolu`, nommant la clé : un banc qui ne peut pas dater
+  doit le DIRE, pas improviser.
+
+Corollaire : « l'arbre n'est pas encore bilingue » est un état PROVISOIRE, jamais un
+contrat. Le cas qui l'affirmait est INVERSÉ (voir son docstring), pas supprimé.
 """
 import hashlib
 import html
+import importlib.util
 import json
 import os
 import re
@@ -93,6 +108,23 @@ SLICE2 = {"slug": "i18n-lint-bilingue", "files": 4}
 # que le comportement bilingue est déjà dans l'arbre, alors que la copie versionnée
 # `pipeline/pj_card_lint.py` refuse encore une carte anglaise (mesuré).
 CORRECTEUR_LINTER = "i18n-lint-bilingue"
+
+# Clé d'arrimage GELÉE (arbitrage `t_ca894fd4`, décision 3) : la révision À LAQUELLE
+# l'artefact daté (le registre de la planche) décrit l'arbre.
+#
+# Écrit en clair parce qu'une clé courte reste résoluble et se vérifie à l'œil : elle est
+# ici le SUJET du banc (les 4 scénarios la nomment), pas un détail d'implémentation.
+# Elle n'est PAS dérivée du registre : le banc se validerait par lui-même.
+#
+# Vérifié à l'écriture de ce banc :
+#   git rev-parse HEAD:docs/architecture/context/issue-2-plate.measure.py
+#   git rev-parse <clé>:docs/architecture/context/issue-2-plate.measure.py
+#     -> 96560ad4f39da7c2d08fd03bb1586e116ecbe005 pour les DEUX ;
+#   git rev-parse HEAD:pipeline/pj_card_lint.py = <clé>:… = 1147290a61ec…
+#   git rev-parse HEAD:docs/…/issue-2-plate.html = 430d0375 (la clé est ANTÉRIEURE à
+#     e4da869, qui corrige la planche sur la règle bilingue du 20/09).
+#   Mesure : 20 fichiers / 3 052 lignes / 1 559 lignes accentuées — concordance rc=0.
+ANCRAGE_REVISION = "6d787c5"
 
 # Découpage déclaré par la spec (`specs/2/slices.json`) : GELÉ ici, jamais dérivé du
 # registre de la planche — sinon le banc validerait le registre par lui-même.
@@ -301,22 +333,186 @@ def clone(clone_base, tmp_path):
             "script": d / MEASURE_REL}
 
 
+@pytest.fixture(scope="module")
+def clone_tip(tmp_path_factory):
+    """Clone jetable ARRÊTÉ SUR LE HEAD de la branche — l'état que le banc doit juger.
+
+    Distinct de `clone_base` : celui-ci s'arrête au commit qui porte la PLANCHE (pour juger
+    l'artefact ratifié), celui-là s'arrête au HEAD VIVANT (pour juger le CODE de la branche).
+    Confondre les deux est le piège que ce banc combat : juger les 3 copies du linter sur un
+    clone figé à la planche, c'est juger un état que personne ne prétend être le contrat —
+    et la carte `dev` qui rend l'arbre bilingue n'y changerait jamais rien.
+    """
+    head = _run(["git", "-C", str(REPO), "rev-parse", "HEAD"]).stdout.strip()
+    assert head, "HEAD irrésolu : le banc ne peut pas juger l'état de la branche"
+    d = tmp_path_factory.mktemp("tip") / "clone"
+    p = _run(["git", "clone", "--no-hardlinks", "--quiet", str(REPO), str(d)])
+    assert p.returncode == 0, "clone impossible : %s" % p.stderr
+    p = _run(["git", "-C", str(d), "checkout", "--detach", head, "--quiet"])
+    assert p.returncode == 0, "checkout %s impossible : %s" % (head, p.stderr)
+    print("witness clone du tip : %s" % head[:10])
+    return {"dir": d, "head": head}
+
+
+# --------------------------------------------------------------------------- datation
+#
+# Décision 3 de l'arbitrage `t_ca894fd4` : « un banc qui ratifie un artefact DATÉ doit
+# dater son propre jugement ». Le registre de la planche décrit l'arbre à UNE révision.
+# Confronté à un arbre vivant, il produit forcément un écart dès qu'une slice traduit un
+# fichier du corpus — l'écart est alors un CONFLIT D'ÉCHÉANCE, pas un défaut. Sans
+# datation, ce banc devient rouge pour une raison qui n'impute rien à personne, et la
+# branche n'a aucun chemin vert.
+
+
+class AncrageIrresolu(RuntimeError):
+    """La clé d'arrimage du banc ne résout plus dans le dépôt : le banc ne peut pas dater."""
+
+
+def _rev(checkout, revision="HEAD"):
+    """SHA complet de `revision` dans `checkout`, ou None si elle ne résout pas."""
+    p = _run(["git", "-C", str(checkout), "rev-parse", "--verify", "--quiet",
+              "%s^{commit}" % revision])
+    return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
+
+
+def ancrage_du_registre(checkout=REPO, revision=None):
+    """(clé, SHA de la clé) — vérifie que la clé GELÉE résout, sinon `AncrageIrresolu`.
+
+    Le message NOMME la clé : c'est tout l'intérêt du cas d'erreur. Une clé irrésolue
+    doit faire échouer le banc bruyamment, jamais le faire passer.
+    """
+    cle = ANCRAGE_REVISION if revision is None else revision
+    sha = _rev(checkout, cle)
+    if sha is None:
+        raise AncrageIrresolu(
+            "clé d'arrimage %r irrésolue dans %s : `git rev-parse --verify --quiet "
+            "%s^{commit}` a échoué. Le banc ne peut pas dater son jugement — corriger la "
+            "clé ou constater que l'historique a été réécrit."
+            % (cle, checkout, cle)
+        )
+    return cle, sha
+
+
+def _revision_courante(checkout=REPO):
+    """SHA du HEAD vivant du checkout."""
+    p = _run(["git", "-C", str(checkout), "rev-parse", "--verify", "HEAD"])
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def hors_ancrage(checkout=REPO):
+    """True si l'arbre n'est pas à la clé d'arrimage — donc si le jugement est daté hors."""
+    _, sha = ancrage_du_registre(checkout)
+    courant = _revision_courante(checkout)
+    if courant is None:
+        raise AncrageIrresolu(
+            "HEAD irrésolu dans %s : impossible de dater le jugement" % checkout)
+    return courant != sha
+
+
+@pytest.fixture
+def ancrage():
+    """Datation du jugement, mesurée — jamais supposée.
+
+    Rend un dict :
+      cle       clé d'arrimage déclarée par le banc (nommée dans les messages) ;
+      sha       SHA que la clé résout ;
+      courant   HEAD vivant du checkout du banc ;
+      a_l_ancrage  courant == sha ;
+      raison    message d'INDÉTERMINÉ nommant la clé ET la révision courante ;
+      determiner(action, checkout)  DÉTERMINE une mesure : l'exécute sur un arbre daté,
+                                    et sort en `skip` nommé sur un arbre vivant.
+
+    Le `skip` est le point du contrat : hors de la clé, le banc ne prononce NI échec NI
+    vert. Il le dit, en nommant la révision d'arrimage.
+
+    `checkout` est le paramètre qui rend le contrat exerçable : la datation porte sur
+    l'arbre QUE L'ON MESURE, pas sur l'arbre où le banc est installé. C'est aussi ce qui
+    évite l'anti-patron que tout ce banc combat : mesurer un état puis le juger sans dire
+    de quand il date.
+    """
+    cle, sha = ancrage_du_registre(REPO)
+    courant = _revision_courante(REPO)
+    a_l_ancrage = courant == sha
+
+    def message(courant_mesure):
+        return ("INDÉTERMINÉ : le registre de la planche est daté à la clé d'arrimage %r "
+                "(sha %s) ; l'arbre mesuré est à %s (sha %s). Hors de sa clé, ce banc ne "
+                "prononce ni échec ni vert — c'est un conflit d'échéance, pas un défaut."
+                % (cle, sha[:10], (courant_mesure or "?")[:10], courant_mesure or "?"))
+
+    def determiner(action, checkout=REPO):
+        rev = _revision_courante(checkout)
+        if rev is None:
+            raise AncrageIrresolu(
+                "HEAD irrésolu dans %s : impossible de dater le jugement" % checkout)
+        if rev != sha:
+            pytest.skip(message(rev))
+        return action()
+
+    print("witness datation : clé=%s sha=%s · arbre du banc=%s · à l'ancrage=%s"
+          % (cle, sha[:10], (courant or "?")[:10], a_l_ancrage))
+    return {"cle": cle, "sha": sha, "courant": courant, "a_l_ancrage": a_l_ancrage,
+            "raison": message(courant), "message": message, "determiner": determiner}
+
+
+@pytest.fixture
+def clone_ancrage(clone_base, tmp_path):
+    """Clone ramené À la clé d'arrimage : le seul arbre sur lequel le verdict est DÉTERMINÉ.
+
+    Le clone est un objet à nous : on peut le déplacer dans le temps sans toucher l'arbre
+    partagé en cours d'écriture (même protocole que `clone`, un cran plus loin).
+    """
+    cle, sha = ancrage_du_registre(clone_base["dir"])
+    d = tmp_path / "clone_ancrage"
+    shutil.copytree(clone_base["dir"], d)
+    p = _run(["git", "-C", str(d), "checkout", "--detach", sha, "--quiet"])
+    assert p.returncode == 0, (
+        "clone à la clé %r (%s) impossible : %s" % (cle, sha, p.stderr))
+    plate = d / PLATE_REL
+    ledger_of(plate)
+    print("witness clone ancré : %s -> %s" % (cle, sha[:10]))
+    return {"dir": d, "cle": cle, "sha": sha, "plate": plate, "script": d / MEASURE_REL}
+
+
 # --------------------------------------------------------------------------- tests
 
 
-def test_nominal_la_mesure_regenere_les_totaux_de_la_planche():
-    """Scénario nominal : exit 0 et les totaux sont ceux inscrits dans la planche."""
+def test_nominal_la_mesure_regenere_les_totaux_de_la_planche(ancrage, clone_ancrage):
+    """Scénario nominal : à la clé d'arrimage, exit 0 et les totaux sont ceux de la planche.
+
+    Le contrat porte sur une REVISION, pas sur « HEAD » : la mesure est faite sur le clone
+    ramené à la clé d'arrimage du banc, et hors de cette clé le jugement est daté
+    INDÉTERMINÉ (`ancrage.determiner`) — jamais imputé à un vivant qui n'y peut rien.
+    """
     assert MEASURE.exists(), "script de mesure absent : %s" % MEASURE
-    p = measure(REPO, PLATE)
-    assert p.returncode == 0, (
-        "la mesure doit sortir exit 0 sur l'arbre de la branche\n"
-        "--- stdout ---\n%s\n--- stderr ---\n%s" % (p.stdout, p.stderr)
-    )
+    c = clone_ancrage
+
+    def verifier():
+        p = measure(c["dir"], c["plate"], c["script"])
+        print("witness mesure à la clé %s : rc=%d\n%s" % (c["cle"], p.returncode, p.stdout))
+        assert p.returncode == 0, (
+            "à la clé d'arrimage %r, la mesure doit sortir exit 0 sur l'arbre de l'ancre\n"
+            "--- stdout ---\n%s\n--- stderr ---\n%s" % (c["cle"], p.stdout, p.stderr)
+        )
+        assert "concordance" in p.stdout, p.stdout
+        assert ("%d fichiers / %d lignes / %d lignes accentuées"
+                % (CORPUS_CIBLE["files"], CORPUS_CIBLE["lines"],
+                   CORPUS_CIBLE["accented_lines"])) in p.stdout, (
+            "la mesure de l'ancre doit reproduire les totaux GELÉS du corpus %r :\n%s"
+            % (CORPUS_CIBLE, p.stdout))
+        return p
+
+    ancrage["determiner"](verifier, c["dir"])
 
 
-def test_nominal_le_registre_de_la_planche_concorde_avec_l_arbre():
-    """Le registre machine est confronté à l'arbre, fichier par fichier."""
-    ledger = ledger_of(PLATE)
+def test_nominal_le_registre_de_la_planche_concorde_avec_l_arbre(ancrage, clone_ancrage):
+    """Le registre machine est confronté à l'arbre, fichier par fichier.
+
+    Deux étages, et l'ordre compte : (1) les invariants GELÉS du registre (`issue`,
+    `corpus`) sont jugés SANS datation — ils ne dépendent d'aucune révision ; (2) la
+    confrontation fichier par fichier est une MESURE, donc datée.
+    """
+    ledger = ledger_of(clone_ancrage["plate"])
     assert ledger.get("issue") == 2, (
         "le registre doit porter son identité (`issue: 2`) : %r" % ledger.get("issue")
     )
@@ -326,77 +522,95 @@ def test_nominal_le_registre_de_la_planche_concorde_avec_l_arbre():
             "registre.corpus.%s = %r, attendu %r" % (champ, corpus.get(champ), attendu)
         )
 
-    arbre = tree_stats(REPO)
-    mesures = {rel: v for rel, v in arbre.items() if not rel.startswith("docs/")}
-    assert len(mesures) == CORPUS_CIBLE["files"], (
-        "l'arbre porte %d .md hors vault, attendu %d : %s"
-        % (len(mesures), CORPUS_CIBLE["files"], sorted(mesures))
-    )
-    assert sum(v[0] for v in mesures.values()) == CORPUS_CIBLE["lines"]
+    def confronter():
+        arbre = tree_stats(clone_ancrage["dir"])
+        mesures = {rel: v for rel, v in arbre.items() if not rel.startswith("docs/")}
+        assert len(mesures) == CORPUS_CIBLE["files"], (
+            "l'arbre (clé %s) porte %d .md hors vault, attendu %d : %s"
+            % (clone_ancrage["cle"], len(mesures), CORPUS_CIBLE["files"], sorted(mesures))
+        )
+        assert sum(v[0] for v in mesures.values()) == CORPUS_CIBLE["lines"]
 
-    declarees = {}
-    for k, rec in slices_of(ledger).items():
-        for rel in files_of(rec):
-            declarees[rel] = (rec, per_file(rec, rel))
+        declarees = {}
+        for k, rec in slices_of(ledger).items():
+            for rel in files_of(rec):
+                declarees[rel] = (rec, per_file(rec, rel))
 
-    ecarts = []
-    for rel, (lignes, acc) in sorted(mesures.items()):
-        if rel not in declarees:
-            continue  # non assigné : avertissement, jamais un échec (contrat)
-        rec, entry = declarees[rel]
-        if entry is not None:
-            if entry.get("lines") != lignes:
-                ecarts.append("%s: lignes déclarées %r, mesurées %d"
-                              % (rel, entry.get("lines"), lignes))
-            if entry.get("accented_lines") != acc:
-                ecarts.append("%s: lignes accentuées déclarées %r, mesurées %d"
-                              % (rel, entry.get("accented_lines"), acc))
-    assert not ecarts, "registre de planche en écart avec l'arbre :\n  " + "\n  ".join(ecarts)
+        ecarts = []
+        for rel, (lignes, acc) in sorted(mesures.items()):
+            if rel not in declarees:
+                continue  # non assigné : avertissement, jamais un échec (contrat)
+            rec, entry = declarees[rel]
+            if entry is not None:
+                if entry.get("lines") != lignes:
+                    ecarts.append("%s: lignes déclarées %r, mesurées %d"
+                                  % (rel, entry.get("lines"), lignes))
+                if entry.get("accented_lines") != acc:
+                    ecarts.append("%s: lignes accentuées déclarées %r, mesurées %d"
+                                  % (rel, entry.get("accented_lines"), acc))
+        print("witness registre ↔ arbre (clé %s) : %d fichier(s) déclaré(s), %d écart(s)"
+              % (clone_ancrage["cle"], len(declarees), len(ecarts)))
+        assert not ecarts, ("registre de planche en écart avec l'arbre :\n  "
+                            + "\n  ".join(ecarts))
+
+    ancrage["determiner"](confronter, clone_ancrage["dir"])
 
 
-def test_nominal_planche_registre_et_arbre_concordent_par_slice():
-    """Clôture arbre ↔ registre ↔ prose de la planche, par slice puis corpus."""
-    ledger = ledger_of(PLATE)
-    pro = plate_totals(PLATE.read_text(encoding="utf-8"))
+def test_nominal_planche_registre_et_arbre_concordent_par_slice(ancrage, clone_ancrage):
+    """Clôture arbre ↔ registre ↔ prose de la planche, par slice puis corpus.
+
+    À la clé d'arrimage, les TROIS lectures concordent : c'est le verdict DÉTERMINÉ du
+    scénario « dans la clé d'arrimage, le verdict reste DÉTERMINÉ », et son témoin est
+    le nombre de slices confrontées.
+    """
+    ledger = ledger_of(clone_ancrage["plate"])
+    pro = plate_totals(clone_ancrage["plate"].read_text(encoding="utf-8"))
     recs = slices_of(ledger)
 
     assert pro["corpus"] == CORPUS_CIBLE, (
-        "prose de la planche = %r, attendu %r" % (pro["corpus"], CORPUS_CIBLE)
+        "prose de la planche (clé %s) = %r, attendu %r"
+        % (clone_ancrage["cle"], pro["corpus"], CORPUS_CIBLE)
     )
     assert pro["entete"] == pro["corpus"], (
         "la planche se contredit : en-tête %r vs tableau %r"
         % (pro["entete"], pro["corpus"])
     )
 
-    ecarts = []
-    for k, fichier_attendu in sorted(SLICES.items()):
-        rec = recs.get(k)
-        if rec is None:
-            ecarts.append("slice %d absente du registre" % k)
-            continue
-        if sorted(files_of(rec)) != sorted(fichier_attendu):
-            ecarts.append("slice %d : fichiers %r, attendus %r"
-                          % (k, sorted(files_of(rec)), sorted(fichier_attendu)))
-            continue
-        lignes = sum(stats(REPO, f)[0] for f in fichier_attendu)
-        acc = sum(stats(REPO, f)[1] for f in fichier_attendu)
-        if rec.get("lines") != lignes:
-            ecarts.append("slice %d : lignes registre %r, arbre %d"
-                          % (k, rec.get("lines"), lignes))
-        if rec.get("accented_lines") != acc:
-            ecarts.append("slice %d : accentuées registre %r, arbre %d"
-                          % (k, rec.get("accented_lines"), acc))
-        attendu_prose = pro["slices"].get(k)
-        if attendu_prose is None:
-            ecarts.append("slice %d absente du tableau d'impact de la planche" % k)
-        else:
-            if attendu_prose["lines"] != lignes:
-                ecarts.append("slice %d : prose planche %d lignes, arbre %d"
-                              % (k, attendu_prose["lines"], lignes))
-            if attendu_prose["accented_lines"] != acc:
-                ecarts.append("slice %d : prose planche %d accentuées, arbre %d"
-                              % (k, attendu_prose["accented_lines"], acc))
-    assert not ecarts, "planche, registre et arbre divergent :\n  " + "\n  ".join(ecarts)
+    def confronter():
+        ecarts = []
+        for k, fichier_attendu in sorted(SLICES.items()):
+            rec = recs.get(k)
+            if rec is None:
+                ecarts.append("slice %d absente du registre" % k)
+                continue
+            if sorted(files_of(rec)) != sorted(fichier_attendu):
+                ecarts.append("slice %d : fichiers %r, attendus %r"
+                              % (k, sorted(files_of(rec)), sorted(fichier_attendu)))
+                continue
+            lignes = sum(stats(clone_ancrage["dir"], f)[0] for f in fichier_attendu)
+            acc = sum(stats(clone_ancrage["dir"], f)[1] for f in fichier_attendu)
+            if rec.get("lines") != lignes:
+                ecarts.append("slice %d : lignes registre %r, arbre %d"
+                              % (k, rec.get("lines"), lignes))
+            if rec.get("accented_lines") != acc:
+                ecarts.append("slice %d : accentuées registre %r, arbre %d"
+                              % (k, rec.get("accented_lines"), acc))
+            attendu_prose = pro["slices"].get(k)
+            if attendu_prose is None:
+                ecarts.append("slice %d absente du tableau d'impact de la planche" % k)
+            else:
+                if attendu_prose["lines"] != lignes:
+                    ecarts.append("slice %d : prose planche %d lignes, arbre %d"
+                                  % (k, attendu_prose["lines"], lignes))
+                if attendu_prose["accented_lines"] != acc:
+                    ecarts.append("slice %d : prose planche %d accentuées, arbre %d"
+                                  % (k, attendu_prose["accented_lines"], acc))
+        print("witness verdict DÉTERMINÉ (clé %s) : %d slice(s) confrontée(s), %d écart(s)"
+              % (clone_ancrage["cle"], len(SLICES), len(ecarts)))
+        assert not ecarts, ("planche, registre et arbre divergent :\n  "
+                            + "\n  ".join(ecarts))
+
+    ancrage["determiner"](confronter, clone_ancrage["dir"])
 
 
 def test_nominal_la_planche_et_le_script_mesures_sont_ceux_du_commit(clone_base):
@@ -703,46 +917,115 @@ def test_nominal_le_registre_de_la_planche_suit_la_spec_amendee_de_la_slice_2():
                         "amendée du 20/09 :\n  - " + "\n  - ".join(ecarts))
 
 
-def test_limite_la_planche_n_affirme_pas_que_le_linter_de_l_arbre_est_deja_bilingue(clone):
-    """Limite — la correction est un LIVRABLE, pas un état.
+# L'assertion inversée (décision 1 de `t_ca894fd4`) : le contrat est que le linter de
+# l'arbre ACCEPTE une carte anglaise. L'ancienne version exigeait le REFUS et était donc
+# condamnée à devenir fausse — c'est ce qui en faisait un rouge de conflit d'échéance et
+# non un contrat.
+CARTE_LINTER_EN = (
+    "## 1. Context & Objective\nGoal.\n\n"
+    "## 2. Acceptance criteria\n```gherkin\nFeature: x\n  Scenario: nominal\n"
+    "    Given a\n    When b\n    Then c\n  Scenario: edge\n    Given d\n"
+    "    When e\n    Then f\n```\n\n"
+    "## 3. DoR & DoD\nDoR: nothing. DoD: all.\n\n"
+    "## 4. Technical considerations\nNever touch the anchor.\n\n"
+    "## 5. Out of scope\nNothing.\n"
+)
 
-    Mesuré : la copie VERSIONNÉE `pipeline/pj_card_lint.py` refuse encore une carte
-    anglaise (4 sections « manquantes » sur 5) et son GUARDRAIL ignore `never`/`do not`.
-    Une planche qui laisserait croire le contraire induirait un lecteur en erreur — c'est
-    exactement le défaut qui a fait renvoyer la version précédente.
+# LE témoin du bilingue, et sa preuve en un seul couple : la MÊME carte anglaise privée de
+# son garde-fou N'est PAS conforme. Sans cette moitié, un linter qui accepterait n'importe
+# quoi passerait le nominal — le contrôle positif ne prouverait rien à lui seul.
+CARTE_LINTER_EN_SANS_GARDE_FOU = (
+    "## 1. Context & Objective\nGoal.\n\n"
+    "## 2. Acceptance criteria\n```gherkin\nFeature: x\n  Scenario: nominal\n"
+    "    Given a\n    When b\n    Then c\n  Scenario: edge\n    Given d\n"
+    "    When e\n    Then f\n```\n\n"
+    "## 3. DoR & DoD\nDoR: nothing. DoD: all.\n\n"
+    "## 4. Technical considerations\nKeep the anchor safe and sound.\n\n"
+    "## 5. Out of scope\nNothing.\n"
+)
 
-    Le cas est MESURÉ, pas rédigé : le banc charge le linter de l'arbre par son chemin
-    canonique et exige que le comportement observé soit celui que la planche décrit.
-    """
-    import importlib.util
+# Contrôle négatif : la carte FRANÇAISE reste acceptée (bilingue, pas remplacement).
+CARTE_LINTER_FR = (
+    "## 1. Contexte & Objectif\nBut.\n\n"
+    "## 2. Critères d'acceptation\n```gherkin\nFonctionnalité: x\n  Scénario: nominal\n"
+    "    Étant donné a\n    Quand b\n    Alors c\n  Scénario: limite\n    Étant donné d\n"
+    "    Quand e\n    Alors f\n```\n\n"
+    "## 3. DoR & DoD\nDoR : rien. DoD : tout.\n\n"
+    "## 4. Considérations techniques\nInterdit de toucher l'ancre.\n\n"
+    "## 5. Hors-scope\nRien.\n"
+)
 
-    spec = importlib.util.spec_from_file_location(
-        "lint_arbre", REPO / "pipeline/pj_card_lint.py")
+# Carte NON conforme réduite : sert au comptage de non-régression (le linter ne doit pas
+# s'assouplir en devenant bilingue).
+CARTE_LINTER_NON_CONFORME = "## 1. Context & Objective\nGoal only.\n"
+
+
+def _charge_linter(chemin, nom="lint_arbre"):
+    """Charge une copie du linter par son chemin canonique (l'idiome du dépôt)."""
+    assert Path(chemin).is_file(), "linter absent : %s" % chemin
+    spec = importlib.util.spec_from_file_location(nom, str(chemin))
+    assert spec is not None and spec.loader is not None, (
+        "chargement de %s impossible : le cas a perdu son sujet" % chemin)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    assert hasattr(mod, "lint"), "%s n'expose pas `lint()`" % chemin
+    return mod
 
-    carte_en = (
-        "## 1. Context & Objective\nGoal.\n\n"
-        "## 2. Acceptance criteria\n```gherkin\nFeature: x\n  Scenario: nominal\n"
-        "    Given a\n    When b\n    Then c\n  Scenario: edge\n    Given d\n"
-        "    When e\n    Then f\n```\n\n"
-        "## 3. DoR & DoD\nDoR: nothing. DoD: all.\n\n"
-        "## 4. Technical considerations\nNever touch the anchor.\n\n"
-        "## 5. Out of scope\nNothing.\n"
-    )
-    constat = mod.lint({"body": carte_en, "title": "x"})
-    print("witness: linter de l'arbre %s -> %r" % (REPO / "pipeline/pj_card_lint.py", constat))
-    assert constat, (
-        "le linter VERSIONNÉ accepte déjà une carte anglaise : ce cas n'a plus de sujet, "
-        "il faut le retirer plutôt que le laisser passer — la planche n'aurait plus à "
-        "renvoyer la correction à la slice 2"
-    )
-    assert any("section" in i for i in constat), (
-        "l'attendu est le refus des titres anglais ; obtenu %r" % constat
+
+def test_limite_la_planche_n_affirme_pas_que_le_linter_de_l_arbre_est_deja_bilingue(clone_tip):
+    """Limite — l'assertion est INVERSÉE : le linter de l'arbre ACCEPTE l'anglais.
+
+    Décision 1 de `t_ca894fd4` : ce cas jugeait un état PROVISOIRE (« le linter n'est pas
+    encore bilingue ») et exigeait donc un refus. Un état provisoire n'est pas un contrat :
+    à peine la slice 2 livrée, le cas devenait rouge pour un progrès. Il garde sa force
+    probante — retournée : c'est le comportement BILINGUE qui est désormais exigé, avec son
+    contrôle négatif, pour qu'un linter devenu laxiste ne passe pas.
+
+    Le cas est MESURÉ, pas rédigé : le banc charge les 3 copies VERSIONNÉES du linter par
+    leur chemin canonique et confronte ce qu'elles rendent à la prose de la planche. Il
+    tourne sur une COPIE du clone ARRÊTÉE SUR LE HEAD — l'état que la branche prétend être.
+    """
+    # 1. LA MÊME carte anglaise conforme est ACCEPTÉE par les 3 copies VERSIONNÉES.
+    copies = [
+        "pipeline/pj_card_lint.py",
+        "agents/pj-master/scripts/pj_card_lint.py",
+        "skills/pj-pipeline/scripts/pj_card_lint.py",
+    ]
+    refus = []
+    for rel in copies:
+        mod = _charge_linter(clone_tip["dir"] / rel, nom="lint_" + rel.replace("/", "_"))
+        constat = mod.lint({"body": CARTE_LINTER_EN, "title": "x"})
+        print("witness: %s (tip %s) -> %d problème(s) %r"
+              % (rel, clone_tip["head"][:10], len(constat), constat))
+        if constat:
+            refus.append("%s refuse encore une carte anglaise conforme : %r" % (rel, constat))
+    assert not refus, (
+        "le contrat du 20/09 est que le linter de cartes SOIT bilingue : les copies "
+        "versionnées doivent ACCEPTER une carte anglaise conforme.\n  - "
+        + "\n  - ".join(refus)
     )
 
+    # 2. Contrôle NÉGATIF : le refus subsiste sur une carte NON conforme.
+    #    Un linter qui accepterait tout satisferait (1) sans rien prouver.
+    mod = _charge_linter(clone_tip["dir"] / "pipeline/pj_card_lint.py")
+    laxiste = mod.lint({"body": CARTE_LINTER_EN_SANS_GARDE_FOU, "title": "x"})
+    assert laxiste, (
+        "la MÊME carte anglaise privée de son garde-fou doit rester REFUSÉE : un linter "
+        "qui accepte tout n'est pas bilingue, il est laxiste (constat %r)" % laxiste)
+    assert any("guardrail" in i or "garde-fou" in i for i in laxiste), (
+        "le refus doit nommer le garde-fou manquant : %r" % laxiste)
+    print("witness contrôle négatif : garde-fou manquant -> %r" % laxiste)
+
+    # 3. Bilingue, pas remplacement : la carte FRANÇAISE reste acceptée.
+    fr = mod.lint({"body": CARTE_LINTER_FR, "title": "x"})
+    assert not fr, (
+        "une carte FRANÇAISE conforme doit rester acceptée (bilingue, pas remplacement) : "
+        "%r" % fr)
+    print("witness bilingue : carte FR conforme -> %r" % fr)
+
+    # 4. La PROSE de la planche nomme la slice qui PORTE la correction.
     prose = _prose(_plate_text())
-    assert re.search(r"linter est d[ée]sormais bilingue|BILINGUE|rendu \\*?\\*?bilingue",
+    assert re.search(r"linter est d[ée]sormais bilingue|BILINGUE|rendu \*?\*?bilingue",
                      prose, re.I), (
         "la planche doit dire que la correction EST PORTÉE (par la slice 2), pas que "
         "l'arbre est déjà conforme"
@@ -750,6 +1033,7 @@ def test_limite_la_planche_n_affirme_pas_que_le_linter_de_l_arbre_est_deja_bilin
     assert CORRECTEUR_LINTER in prose, (
         "la planche doit NOMMER la slice qui porte la correction du linter"
     )
+
 
 
 # --------------------------------------------------- branches du contrat non couvertes
@@ -762,25 +1046,38 @@ def test_limite_la_planche_n_affirme_pas_que_le_linter_de_l_arbre_est_deja_bilin
 # ils ne se déclarent pas hors sujet.
 
 
-def test_nominal_la_sortie_json_porte_le_verdict_et_le_code_de_sortie_suit():
-    """`--json` : la branche machine du contrat, avec son code de sortie.
+def test_nominal_la_sortie_json_porte_le_verdict_et_le_code_de_sortie_suit(ancrage, clone_ancrage):
+    """`--json` : la branche machine du contrat, avec son code de sortie, DATÉE.
 
-    Deux appels sur la MÊME forme : `--json` sur un arbre concordant -> rc 0 et
-    `verdict == "concordance"` ; puis sur un clone muté -> rc 1 et `verdict == "ecart"`.
-    Un rapport qui ne bascule pas avec l'etat n'est pas un rapport.
+    Le rapport `--json` est une MESURE : il porte donc lui aussi une révision. Sur l'arbre
+    VIVANT, `vc` bascule à `ecart` dès qu'une slice traduit un fichier du corpus — c'est un
+    conflit d'échéance. Le contrat est vérifié sur le clone ramené à la clé d'arrimage :
+    `verdict == "concordance"` ET les totaux GELÉS reproduits. La seconde moitié (verdict
+    `ecart` et rc 1, sur un clone muté) est le cas suivant.
     """
-    p = _run([sys.executable, str(MEASURE), "--root", str(REPO),
-              "--plate", str(PLATE), "--json"])
-    assert p.returncode == 0, "mesure --json sur l'arbre : rc=%d\n%s" % (p.returncode, p.stderr)
-    rapport = json.loads(p.stdout)
-    assert rapport["verdict"] == "concordance", rapport["verdict"]
-    assert rapport["declared_md"] == CORPUS_CIBLE["files"]
-    assert rapport["unassigned_md"], (
-        "le rapport doit lister les .md non déclarés (hors corpus) : %r"
-        % rapport["unassigned_md"]
-    )
-    print("witness --json concordance : declared=%d unassigned=%d"
-          % (rapport["declared_md"], len(rapport["unassigned_md"])))
+    c = clone_ancrage
+
+    def verifier():
+        p = _run([sys.executable, str(c["script"]), "--root", str(c["dir"]),
+                  "--plate", str(c["plate"]), "--json"])
+        assert p.returncode == 0, (
+            "mesure --json à la clé %s : rc=%d\n%s" % (c["cle"], p.returncode, p.stderr))
+        rapport = json.loads(p.stdout)
+        assert rapport["verdict"] == "concordance", (
+            "à la clé %s le verdict doit être une concordance : %r"
+            % (c["cle"], rapport["verdict"]))
+        assert rapport["declared_md"] == CORPUS_CIBLE["files"]
+        assert rapport["declared"] == CORPUS_CIBLE, (
+            "les totaux GELÉS du corpus doivent être reproduits à l'ancre : %r"
+            % rapport["declared"])
+        assert rapport["unassigned_md"], (
+            "le rapport doit lister les .md non déclarés (hors corpus) : %r"
+            % rapport["unassigned_md"]
+        )
+        print("witness --json concordance (clé %s) : declared=%d unassigned=%d"
+              % (c["cle"], rapport["declared_md"], len(rapport["unassigned_md"])))
+
+    ancrage["determiner"](verifier, c["dir"])
 
 
 def test_limite_la_sortie_json_suit_l_ecart(clone):
@@ -1040,3 +1337,158 @@ def test_limite_un_arbre_qui_ne_porte_QUE_le_corpus_ne_produit_aucun_avertisseme
                                            CORPUS_CIBLE["files"]) in sortie, sortie
     print("witness sans avertissement : %s"
           % [l for l in sortie.splitlines() if "numération" in l])
+
+
+def test_limite_le_verdict_sur_l_arbre_vivant_suit_la_datation(ancrage):
+    """Limite — le scénario d'origine : registre DATÉ confronté à l'arbre VIVANT.
+
+    C'est le cas qui a motivé la décision 3. L'arbre de la branche porte des fichiers déjà
+    traduits (plus aucun diacritique sur les slices livrées) alors que le registre décrit
+    l'état « avant » : la confrontation est structurellement condamnée à diverger. Le
+    contrat n'est donc PAS « pas d'écart » — il est : le verdict SUIT la datation.
+
+      - arbre vivant hors de la clé -> INDÉTERMINÉ, nommant la clé ET la révision mesurée,
+        et surtout PAS un échec ;
+      - arbre du banc à la clé      -> DÉTERMINÉ, et la mesure est réellement exécutée.
+
+    Le cas est un contrat, pas un constat : il tient dans les DEUX positions de l'arbre et
+    interdit un `determiner` qui skipperait toujours.
+    """
+    if hors_ancrage(REPO):
+        temoin = []
+
+        def action():
+            temoin.append("exécutée")
+            return "mesure"
+
+        with pytest.raises(pytest.skip.Exception) as exc:
+            ancrage["determiner"](action, REPO)
+        msg = str(exc.value)
+        assert "INDÉTERMINÉ" in msg and ancrage["cle"] in msg, (
+            "confronté à l'arbre VIVANT hors de sa clé, le banc doit rapporter "
+            "INDÉTERMINÉ en nommant la révision d'arrimage %r : %r" % (ancrage["cle"], msg))
+        assert (ancrage["courant"] or "?")[:10] in msg, (
+            "le verdict doit aussi nommer la révision de l'arbre mesuré %s : %r"
+            % ((ancrage["courant"] or "?")[:10], msg))
+        assert not temoin, (
+            "l'INDÉTERMINÉ ne doit pas s'accompagner d'une mesure : ce serait juger sans "
+            "dater, exactement l'anti-patron que ce banc combat")
+        print("witness arbre vivant HORS clé : verdict INDÉTERMINÉ (clé %s, mesuré %s)"
+              % (ancrage["cle"], (ancrage["courant"] or "?")[:10]))
+    else:
+        def mesurer_a_l_ancrage():
+            return "DÉTERMINÉ"
+
+        assert ancrage["determiner"](mesurer_a_l_ancrage, REPO) == "DÉTERMINÉ", (
+            "l'arbre du banc EST à la clé %r : le verdict doit être DÉTERMINÉ"
+            % ancrage["cle"])
+        print("witness arbre vivant À la clé : verdict DÉTERMINÉ (clé %s)" % ancrage["cle"])
+
+
+# --------------------------------------------------- datation du jugement (décision 3)
+#
+# Les 3 cas ci-dessous exercent la DATATION elle-même. Sans eux, le mécanisme
+# (clé résolue, hors-clé = INDÉTERMINÉ, dans-clé = DÉTERMINÉ) serait cru sur parole :
+# un `determiner` qui skipperait TOUJOURS éteindrait les 4 rouges sans rien prouver, et
+# c'est exactement l'anti-patron que ce banc combat. Ces cas rendent le mécanisme
+# falsifiable — donc ils ne sont pas tautologiques.
+
+
+def test_limite_hors_de_la_cle_d_arimage_le_verdict_est_INDETERMINE(ancrage, clone_base):
+    """Limite — hors de la clé, le verdict est INDÉTERMINÉ : ni échec, ni vert.
+
+    Le cas est décisif parce qu'il vérifie les DEUX moitiés :
+      - il ne prononce pas d'échec : `determiner` lève `Skipped`, pas une `AssertionError` ;
+      - il ne prononce pas de vert non plus : l'action MESURÉE n'est JAMAIS exécutée, et le
+        témoin `appels` le prouve (une action lancée puis « sautée » serait un vert déguisé) ;
+      - le message NOMME la révision d'arrimage ET la révision mesurée.
+    """
+    vivant = clone_base["dir"]  # clone au commit de la planche : hors de la clé par
+    rev = _revision_courante(vivant)  # construction (la planche a ete corrigee apres)
+    assert rev is not None, "HEAD irrésolu dans le clone de sonde"
+    assert rev != ancrage["sha"], (
+        "l'arbre de sonde est À la clé d'arrimage %r : ce cas n'a plus de sujet, il faut "
+        "le re-pointer sur un arbre réellement hors clé" % ancrage["cle"])
+
+    appels = []
+
+    def action():
+        appels.append("exécutée")
+        return "VERT"
+
+    with pytest.raises(pytest.skip.Exception) as exc:
+        ancrage["determiner"](action, vivant)
+    msg = str(exc.value)
+
+    assert "INDÉTERMINÉ" in msg, (
+        "le verdict hors clé doit être INDÉTERMINÉ, jamais ÉCHEC : %r" % msg)
+    assert ancrage["cle"] in msg, (
+        "le verdict doit NOMMER la révision d'arrimage %r : %r" % (ancrage["cle"], msg))
+    assert rev[:10] in msg, (
+        "le verdict doit NOMMER la révision mesurée %s : %r" % (rev[:10], msg))
+    assert not appels, (
+        "un verdict INDÉTERMINÉ ne doit pas AUSSI exécuter la mesure : ce serait un vert "
+        "déguisé, pas une abstention")
+    print("witness INDÉTERMINÉ : clé=%s mesuré=%s · mesure exécutée=%s"
+          % (ancrage["cle"], rev[:10], bool(appels)))
+
+
+def test_limite_dans_la_cle_d_arimage_le_verdict_reste_DETERMINE(ancrage, clone_ancrage):
+    """Limite — dans la clé, le verdict redevient DÉTERMINÉ : la mesure est EXÉCUTÉE.
+
+    Le contrôle inverse du cas précédent, et il porte sur le témoin : un `determiner` qui
+    skipperait toujours éteindrait les rouges de conflit d'échéance sans rien prouver. Ici
+    l'action doit rendre son résultat ET laisser sa trace.
+    """
+    c = clone_ancrage
+    assert _revision_courante(c["dir"]) == ancrage["sha"], (
+        "le clone d'ancrage doit être à la clé %r (sha %s)"
+        % (ancrage["cle"], ancrage["sha"][:10]))
+    assert hors_ancrage(c["dir"]) is False, (
+        "l'arbre ramené à la clé ne peut pas être daté hors clé")
+    assert hors_ancrage(REPO) == (ancrage["courant"] != ancrage["sha"]), (
+        "la datation de l'arbre du banc doit être MESURÉE, pas supposée")
+
+    temoin = []
+
+    def action():
+        temoin.append("exécutée")
+        return "DÉTERMINÉ"
+
+    assert ancrage["determiner"](action, c["dir"]) == "DÉTERMINÉ"
+    assert temoin, (
+        "dans la clé, le verdict est DÉTERMINÉ : la mesure doit être exécutée pour de vrai")
+    print("witness DÉTERMINÉ : clé=%s (sha %s) · arbre du banc=%s · mesuré=%s"
+          % (ancrage["cle"], ancrage["sha"][:10],
+             (ancrage["courant"] or "?")[:10], c["dir"]))
+
+
+def test_erreur_une_cle_d_arimage_irresolue_est_nommee():
+    """Erreur — la clé ne résout plus : le banc échoue en NOMMANT la clé irrésolue.
+
+    Un banc qui ne peut pas dater son jugement doit le DIRE. Le silence serait le pire des
+    cas : un verdict rendu sans révision, c'est-à-dire un verdict qui ne prouve rien.
+
+    Le cas porte son contrôle positif dans le même souffle : la clé DÉCLARÉE résout, sinon
+    on ne saurait pas distinguer « clé morte » de « banc cassé ».
+    """
+    cle, sha = ancrage_du_registre(REPO)
+    assert len(sha) == 40 and re.fullmatch(r"[0-9a-f]{40}", sha), (
+        "la clé déclarée %r doit résoudre vers un SHA complet : %r" % (cle, sha))
+    for rel in (PLATE_REL, MEASURE_REL):
+        p = _run(["git", "-C", str(REPO), "cat-file", "-e", "%s:%s" % (cle, rel)])
+        assert p.returncode == 0, (
+            "la clé d'arrimage %r doit porter %s — sinon elle ne date rien" % (cle, rel))
+    print("witness clé résolue : %s -> %s · planche et mesure portées" % (cle, sha[:10]))
+
+    morte = "6d787c5-nexiste-pas"
+    assert _rev(REPO, morte) is None, (
+        "le contrôle du cas d'erreur exige une clé qui NE résout PAS : %r résout" % morte)
+    with pytest.raises(AncrageIrresolu) as exc:
+        ancrage_du_registre(REPO, morte)
+    msg = str(exc.value)
+    assert morte in msg, (
+        "l'échec doit NOMMER la clé irrésolue %r : %r" % (morte, msg))
+    assert "arrimage" in msg, (
+        "l'échec doit dire QUELLE clé ne résout pas (clé d'arrimage) : %r" % msg)
+    print("witness clé irrésolue : %r -> AncrageIrresolu nommant la clé" % morte)
