@@ -239,6 +239,10 @@ def ensure_label(name: str, color: str, description: str) -> None:
          "--color", color, "--description", description],
         capture_output=True, text=True)
     if r.returncode != 0 and "already exists" not in r.stderr:
+        # C2 — l'échec est BRUYANT : le nom du label ET le stderr de `gh` tracés,
+        # puis l'exception remonte (jamais avalée) : le geste proposé par la trappe
+        # ne doit jamais être une promesse en l'air.
+        log(f"  ⛔ création du label '{name}' échouée : {(r.stderr or '').strip()[:200]}")
         raise RuntimeError(f"gh label create {name}\n{r.stderr.strip()}")
 
 
@@ -465,6 +469,7 @@ def pull() -> None:
     # RENFO 1 — gate de couverture : une issue qui recouvre du travail en vol ne
     # lance PAS un nouveau graphe. On la signale et on la laisse en attente de
     # décision humaine (le label miroir n'est pas posé, donc elle reste visible).
+    covered = []
     if to_import:
         try:
             titles = {int(i["number"]): i.get("title") or "" for i in issues}
@@ -482,19 +487,38 @@ def pull() -> None:
                     continue
                 v = coverage_verdict(i, ctx)
                 (covered if v["blocked"] else kept).append((i, v))
+            to_import = [i for i, _ in kept]
+        except Exception as e:
+            log(f"  gate de couverture indisponible ({type(e).__name__}: {e}) — pull sans gate")
+            covered = []        # rien n'a été tranché sur ce tick : aucune trappe à poster
+
+    # slice 2b — ORDRE (C1) : le label d'échappatoire est assuré AVANT le premier
+    # commentaire de trappe du tick, et INDÉPENDAMMENT de `to_import`. La trappe
+    # propose « poser le label `pj-import` » : si ce label n'existe pas, le geste est
+    # inexécutable (`could not add label: 'pj-import' not found`). Mesuré : quand la
+    # SEULE candidate du tick est couverte, `to_import` est vidé par le gate (L491),
+    # donc l'ancien garde `if to_import and not DRY_RUN:` ne créait jamais le label
+    # exactement dans le tick où la trappe parle.
+    # Cas (a) : une trappe va être postée. Cas (b) : une issue sera importée.
+    # Un seul appel de création d'échappatoire par tick (idempotent côté gh).
+    if not DRY_RUN and (covered or to_import):
+        if to_import:
+            ensure_mirror_label()
+        ensure_import_override_label()
+
+    if covered:
+        try:
             for i, v in covered:
                 log(f"  ⛔ issue #{i['number']} NON importée — {v['reason']}. "
                     f"Décider : rattacher à {', '.join('#'+str(o) for o in v['overlaps'])} "
                     f"(commenter l'issue) ou assumer une nouvelle tâche "
                     f"(poser le label '{IMPORT_OVERRIDE_LABEL}' puis laisser le pont passer).")
                 _flag_covered_issue(i, v)
-            to_import = [i for i, _ in kept]
         except Exception as e:
-            log(f"  gate de couverture indisponible ({type(e).__name__}: {e}) — pull sans gate")
-
-    if to_import and not DRY_RUN:
-        ensure_mirror_label()
-        ensure_import_override_label()
+            # Le signalement du chevauchement ne doit pas emporter le tick (les imports
+            # du même tick restent valides) — mais il est TRACÉ, jamais muet. La
+            # création du label (C2) est HORS de ce `try` : elle ne peut pas être avalée.
+            log(f"  signalement du chevauchement indisponible ({type(e).__name__}: {e})")
 
     for issue in to_import:
         n = issue["number"]
