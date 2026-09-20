@@ -1,36 +1,36 @@
-# Pipeline YAML — moteur d'orchestration kanban
+# Pipeline YAML — kanban orchestration engine
 
-Moteur de pipeline défini en YAML qui structure le comportement sur les
-tickets kanban Hermes, en mélangeant étapes **déterministes** (commandes
-shell : check template, CI, update kanban/GitHub) et **agentiques** (agents
-externes : hermes profile+modèle, dsh/DeepSeek Harness, claude).
+A pipeline engine defined in YAML that structures the behaviour on Hermes
+kanban tickets, mixing **deterministic** steps (shell commands: template check,
+CI, kanban/GitHub update) and **agentic** ones (external agents: hermes
+profile+model, dsh/DeepSeek Harness, claude).
 
-L'orchestration est pilotée par **structured output** : chaque étape
-agentique émet un JSON validé contre un schéma, et un `gate` déterministe
-décide de l'itération (`goto`) ou de la sortie.
+The orchestration is driven by **structured output**: every agentic step
+emits a JSON validated against a schema, and a deterministic `gate`
+decides the iteration (`goto`) or the exit.
 
-## Fichiers
+## Files
 
-- `pipeline/engine.py` — le moteur (parse YAML, exécute les étapes, gate,
-  cache d'état, CLI `run`/`list`)
-- `pipeline/backends.py` — backends d'exécution agentique (hermes / dsh /
-  claude) + extraction JSON robuste
-- `workflows/spec.yaml` — premier workflow de validation (phase **spec**)
-- `workflows/smoke.yaml` — workflow de test minimal (1 étape agentique dsh)
-- `workflows/schemas/*.json` — schémas JSON des sorties structurées
-- `workflows/templates/ticket.md` — template de ticket (check déterministe)
+- `pipeline/engine.py` — the engine (parse YAML, run the steps, gate,
+  state cache, `run`/`list` CLI)
+- `pipeline/backends.py` — agentic execution backends (hermes / dsh /
+  claude) + robust JSON extraction
+- `workflows/spec.yaml` — first validation workflow (**spec** phase)
+- `workflows/smoke.yaml` — minimal test workflow (1 dsh agentic step)
+- `workflows/schemas/*.json` — JSON schemas of the structured outputs
+- `workflows/templates/ticket.md` — ticket template (deterministic check)
 
-## Schéma d'un workflow
+## Workflow schema
 
 ```yaml
 name: spec
 orchestration:
   mode: structured_output
-  max_iterations: 10        # borne les sauts ARRIÈRE (itérations)
+  max_iterations: 10        # bounds the BACKWARD jumps (iterations)
 
 steps:
   - id: viewpoints
-    type: agentic            # ou deterministic / gate
+    type: agentic            # or deterministic / gate
     parallel: true
     prompt: "..."            # template {{ticket.*}} / {{steps.<id>}}
     agents:
@@ -41,63 +41,63 @@ steps:
   - id: gate
     type: gate
     check: "all(r.get('data',{}).get('status')=='ok' for r in revalidate.get('results',[]))"
-    on_fail: revalidate      # saut arrière = itération
-    on_pass: finalize        # saut avant = progression
+    on_fail: revalidate      # backward jump = iteration
+    on_pass: finalize        # forward jump = progress
 ```
 
-Types d'étape :
+Step types:
 
-- `agentic` — un ou plusieurs agents (`agents:` en parallèle, ou `agent:`
-  seul). La sortie est extraite (JSON) puis validée contre `output.schema`.
-- `deterministic` — `command:` (une commande) ou `actions:` (liste), rendues
-  via `{{...}}` puis exécutées en shell.
-- `gate` — évalue `check:` (expression Python sur les sorties d'étapes) et
-  route via `on_pass`/`on_fail`.
+- `agentic` — one or more agents (`agents:` in parallel, or `agent:`
+  alone). The output is extracted (JSON) then validated against `output.schema`.
+- `deterministic` — `command:` (one command) or `actions:` (a list), rendered
+  through `{{...}}` then run in a shell.
+- `gate` — evaluates `check:` (a Python expression over the step outputs) and
+  routes through `on_pass`/`on_fail`.
 
-Backends agentiques (`backend:` dans un agent) :
+Agentic backends (`backend:` in an agent):
 
-- `hermes` — `hermes -p <profile> chat -q "<prompt>"` (+ `model:` optionnel)
+- `hermes` — `hermes -p <profile> chat -q "<prompt>"` (+ optional `model:`)
 - `dsh` — `dsh --profile <profile> "<prompt>"` (DeepSeek Harness)
 - `claude` — `claude -p "<prompt>"` (Claude Code CLI)
 
-## Utilisation
+## Usage
 
 ```bash
-# Lister les étapes d'un workflow (sans exécuter)
+# List the steps of a workflow (without running it)
 python3 pipeline/engine.py list workflows/spec.yaml
 
-# Exécuter un workflow sur un ticket (simulation)
+# Run a workflow on a ticket (simulation)
 python3 pipeline/engine.py run workflows/spec.yaml <ticket_id> --dry-run
 
-# Exécution réelle (écrit .pipeline/<ticket>.json + side effects)
+# Real run (writes .pipeline/<ticket>.json + side effects)
 python3 pipeline/engine.py run workflows/spec.yaml <ticket_id> --board hermes-experiment
 ```
 
-## Idempotence / rejouabilité
+## Idempotence / replayability
 
-Le moteur écrit un fichier d'état par ticket (`.pipeline/<ticket>.json`)
-qui enregistre la sortie de chaque étape. Un re-run **saute les étapes déjà
-réussies** (cache) et ne rejoue que ce qui a échoué ou changé. Supprimer le
-fichier d'état force une exécution complète.
+The engine writes one state file per ticket (`.pipeline/<ticket>.json`)
+recording the output of every step. A re-run **skips the steps that already
+succeeded** (cache) and only replays what failed or changed. Deleting the
+state file forces a full run.
 
-## Contexte de template
+## Template context
 
-Les prompts et commandes utilisent `{{...}}` :
+The prompts and commands use `{{...}}`:
 
 - `{{ticket.id}}`, `{{ticket.title}}`, `{{ticket.body}}`,
-  `{{ticket.issue_number}}` (déduit de la ligne "Importé depuis <url>")
-- `{{steps.<id>}}` — sortie JSON d'une étape précédente
-- `{{board}}` — slug du board
+  `{{ticket.issue_number}}` (deduced from the "Importé depuis <url>" line)
+- `{{steps.<id>}}` — JSON output of a previous step
+- `{{board}}` — board slug
 
-## Traçabilité
+## Traceability
 
-- **GitHub = grosses mailles** : le `finalize` édite l'issue (numéro déduit
-  du body de carte, même convention que le pont `gh_kanban_bridge.py`).
-- **Hermes = détail** : chaque étape et sa sortie sont dans le fichier
-  d'état `.pipeline/<ticket>.json` + commentaires kanban.
-- **Discord = live** : à chaque passage d'étape (hors `--dry-run`), le
-  moteur poste un update dans le thread Discord de l'issue (résolu par le
-  nom `🎫 Issue #N — …` via `discord_thread.py threads`). Le thread est
-  retrouvé depuis `ticket.issue_number` (déduit de la ligne « Importé
-  depuis »). La notification est best-effort : si le thread est introuvable
-  ou le post échoue, le pipeline continue sans casser.
+- **GitHub = coarse grain**: `finalize` edits the issue (number deduced
+  from the card body, same convention as the `gh_kanban_bridge.py` bridge).
+- **Hermes = detail**: every step and its output are in the state
+  file `.pipeline/<ticket>.json` + kanban comments.
+- **Discord = live**: on every step transition (outside `--dry-run`), the
+  engine posts an update in the issue's Discord thread (resolved by the
+  name `🎫 Issue #N — …` through `discord_thread.py threads`). The thread is
+  found back from `ticket.issue_number` (deduced from the "Importé depuis"
+  line). The notification is best-effort: if the thread cannot be found
+  or the post fails, the pipeline carries on without breaking.
