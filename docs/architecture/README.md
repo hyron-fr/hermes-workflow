@@ -18,4 +18,4 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 
 ## Composants
 
-_(à compléter par les cartes `doc-k` au fil des slices livrées.)_
+- [[pj-decision]] — Core pur de décision `/ok` (issue #5, slice 4) : calcule la décision portée par un commentaire, ne l'applique jamais.
