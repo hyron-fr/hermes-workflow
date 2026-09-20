@@ -62,26 +62,52 @@ Corrections to the card's own prose (measured, printed in the failure paths)
    demanding "17 citations of frozen literals" would be red forever, so the citation
    half is written as "count preserved reference -> HEAD" (0 == 0 and 1 == 1, both
    PRINTED as such) and the weight of the limit nature sits on the contract this slice
-   really carries: the 77 backticked machine tokens with a proven production reader
-   (91 citations measured at the reference revision).
+   really carries: the backticked machine tokens with a proven production reader (57
+   tokens / 70 citations measured at the reference revision).
 2. The sister card `t_e0d5b2a1` (dev-10) announces in its limit scenario that the 5
    section titles of the card contract must stay "mot pour mot" through the
    translation, while this card's own guard-rails, the human decision of 2026-09-20 and
    the ratified plate's `gate_labels` all state the opposite: the section titles ARE
    translated (and `pj_lang_lint`'s exemptions are the two machine protocols and
    nothing else, so an accented French title cannot survive anyway). The bank does NOT
-   arbitrate that: it judges the language-agnostic contract (all 5 sections still
-   taught, in the FR or the EN form) and BANS the one form no reading accepts — the
-   DE-ACCENTUATED French label (`Fonctionnalite:`), which is neither language, is
-   invisible to the diacritic scan, and is refused by the linter's own regexes. The
-   linter-acceptance status of each presented title is PRINTED as a diagnostic, not
-   asserted, because its green depends on slice 2 (`pipeline/pj_card_lint.py`), which
-   is not this slice's perimeter.
+   arbitrate that: it judges the language-agnostic contract (all the labels the pre-state
+   teaches are still taught, in the FR or the EN form) and BANS the one form no reading
+   accepts — the DE-ACCENTUATED French label (`Fonctionnalite:`), which is neither
+   language, is invisible to the diacritic scan, and is refused by the linter's own
+   regexes. The linter-acceptance status of each presented title is PRINTED as a
+   diagnostic, not asserted, because its green depends on slice 2
+   (`pipeline/pj_card_lint.py`), which is not this slice's perimeter.
 3. `[gate] ` — the gate comment prefix asserted by the sibling slice-7 bank — is cited
    ZERO times here (measured); this bank does not carry that assertion.
+4. The reference revision is NOT a branch. `origin/dev` had already moved 3 commits past
+   the branch's merge base while this card ran (`e1a25fd` vs `3c6d59b`), so the bank pins
+   the IMMUTABLE commit that added the file — which this card's probe confirms IS the
+   merge base and carries the same blob as `origin/dev` today — and proves the pin
+   discriminates (a branch fails the same checks).
+
+Bank defects found by SIMULATING the peer's work (all mine, all corrected — the skill's
+§6sexies: run the bank against the peer's real output BEFORE completing)
+----------------------------------------------------------------------------------------
+
+1. **Provenance credited a docstring.** `` `<repo> #<N> · <titre>` `` was credited to
+   `plugins/pj-buttons/pj-buttons/__init__.py:17` — a line of that file's DOCSTRING; the
+   plugin's real regex is `([A-Za-z0-9._-]+)\s*#(\d+)` and reads no title. The real
+   translation turned `<titre>` into `<title>`, which is CORRECT, and the bank reported a
+   damaged machine contract. 20 of the 77 credited tokens were in that state. Fixed: the
+   provenance table is now a CODE-ONLY view (docstrings and comments blanked).
+2. **Label comparison must be separator-normalised.** `Fonctionnalité:` vs `Fonctionnalité :`
+   and `Étant donné/Quand/Alors` vs `Étant donné / Quand / Alors`: a character-for-character
+   comparison reported two labels as DROPPED from a document that teaches them.
+3. **The judged label set must come from the pre-state**, not from the plate's whole list:
+   `jamais / ne pas` is a DETECTION vocabulary token no version of this document teaches, so
+   demanding it at HEAD would be red forever.
+4. The first simulation run reported "BANK RESULT: GREEN" on a clone holding ZERO tests —
+   the bank was still untracked and the harness had not copied it in. A "no tests ran" read
+   as a green is the worst false green; the harness now copies the bank in and the result is
+   reported per nature.
 
 No real clock, no randomness: every fixture is a throwaway git repository built by this
-bank from VERSIONED bytes (`git show origin/dev:<path>`), and every count is recomputed
+bank from VERSIONED bytes (`git show <immutable-ref>:<path>`), and every count is recomputed
 from the bytes in hand rather than asserted as a copied literal.
 """
 import hashlib
@@ -115,10 +141,38 @@ PLATE = REPO / PLATE_REL
 LINTER = REPO / LINTER_REL
 
 SLICE_K = 10
-# The pre-state of this slice: the branch's merge base against `origin/dev`, i.e. the
-# bytes the translation starts from. Read through `git show`, never from a copy kept
-# beside this bank, so the reference cannot drift with the tree under test.
-REF_REF = "origin/dev"
+# The pre-state of this slice: the IMMUTABLE commit that added the file, i.e. the bytes the
+# translation starts from. `origin/dev` is NOT usable — measured during this card, dev is
+# already 3 commits ahead of the branch's merge base (e1a25fd vs 3c6d59b), so a bank pinned
+# on it measures whatever dev holds at run time: the day dev carries the translation, every
+# "count preserved reference -> HEAD" comparison becomes 0 == 0 and the bank goes green by
+# tautology. The adding commit cannot move. Resolved at run time and PRINTED, never a literal.
+REF_UNRESOLVED = None
+
+
+def ref_revision():
+    """The oldest commit that added the slice file — the French pre-state, immutable.
+
+    Note on what sits between that commit and HEAD: the branch's own delta on this file is
+    NOT the translation but slice 1's `bridge/ -> pipeline/` correction, measured as a single
+    hunk (`git diff <ref>...HEAD -- skills/pj-pipeline/SKILL.md`). It touches no backticked
+    citation and no frozen literal, so the "count preserved" comparisons stay meaningful; the
+    case below PRINTS both the resolved revision and that delta so the reader can re-derive it.
+    """
+    global REF_UNRESOLVED
+    if REF_UNRESOLVED is None:
+        out = subprocess.run(["git", "-C", str(REPO), "log", "--format=%H", "--", *SLICE],
+                             capture_output=True, text=True)
+        assert out.returncode == 0 and out.stdout.strip(), (
+            "cannot resolve the commit that added %r: git log returned %r"
+            % (SLICE, out.stdout + out.stderr))
+        REF_UNRESOLVED = out.stdout.strip().splitlines()[-1].strip()
+    return REF_UNRESOLVED
+
+
+def ref_label():
+    """Short, printable name of the reference revision (resolved, never a literal)."""
+    return ref_revision()[:12]
 
 # A neighbour of this slice that lives in the SAME directory and is the subject of
 # another slice (9). It is the trap of the error decor: a bench matching by basename or
@@ -207,8 +261,12 @@ def tracked(root=REPO):
     return sorted(x.decode("utf-8") for x in p.stdout.split(b"\x00") if x)
 
 
-def git_show(rel, ref=REF_REF):
-    """The versioned bytes of `rel` at `ref` — the pre-state of the translation."""
+def git_show(rel, ref=None):
+    """The versioned bytes of `rel` at `ref` — the pre-state of the translation.
+
+    `ref` defaults to the IMMUTABLE adding commit (see `ref_revision`), never to a branch.
+    """
+    ref = ref or ref_revision()
     p = _run(["git", "-C", str(REPO), "show", "%s:%s" % (ref, rel)])
     assert p.returncode == 0, (
         "cannot read the pre-state `%s:%s`: %s\n"
@@ -834,6 +892,60 @@ def test_nominal_the_perimeter_the_ledger_and_the_skeleton_are_the_ratified_ones
           % (SLICE_K, declare, classe, mesures))
 
 
+def test_nominal_the_reference_revision_is_the_immutable_adding_commit_not_a_branch():
+    """Nominal, evidence-quality guard: the "pre-state" the whole bank compares against must
+    be an IMMUTABLE commit, never a branch.
+
+    Measured while writing this bank: `origin/dev` had ALREADY moved 3 commits past the
+    branch's merge base (e1a25fd vs 3c6d59b, the latter carrying the file). A bank pinned on
+    the branch would measure whatever dev holds at run time — and the day dev merges this
+    issue's translation, every "count preserved reference -> HEAD" comparison collapses to
+    0 == 0 and the bank turns green WITHOUT MEASURING ANYTHING. The adding commit cannot move.
+
+    Both halves are executed here: the revision is resolved and its immutability proven by
+    ancestry (it IS an ancestor of HEAD), and the delta between it and the branch's merge
+    base on this file is PRINTED so a reader can re-derive what it does and does not carry.
+    """
+    ref = ref_revision()
+    assert re.fullmatch(r"[0-9a-f]{40}", ref), (
+        "the reference revision must be a full commit sha, obtained %r" % ref)
+    assert _run(["git", "-C", str(REPO), "cat-file", "-t", ref]).stdout.strip() == "commit", (
+        "%s is not a commit: the pre-state would be a ref that can move" % ref)
+    anc = _run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", ref, "HEAD"])
+    assert anc.returncode == 0, (
+        "the reference revision %s is NOT an ancestor of HEAD: it is not this branch's "
+        "pre-state" % ref)
+
+    mb = _run(["git", "-C", str(REPO), "merge-base", "origin/dev", "HEAD"]).stdout.strip()
+    delta_ref = {"commit": ref, "merge_base": mb,
+                 "on_this_file": _run(["git", "-C", str(REPO), "diff", "--stat",
+                                       "%s...HEAD" % mb, "--", *SLICE]).stdout.strip(),
+                 "frozen_literals_cited_at_ref": {
+                     lit: sum(flat(git_show(rel)).count(lit) for rel in SLICE)
+                     for lit in frozen_literals()}}
+    for lit, n in delta_ref["frozen_literals_cited_at_ref"].items():
+        assert n >= 0 and lit in frozen_literals(), "frozen literal lost: %r" % lit
+
+    # negative control, SAME checks, other candidate: a BRANCH must fail them. Without this
+    # the guard would be a sentence, not a control — and the failure mode it exists for
+    # (measuring a moving ref) is invisible precisely because it is green.
+    branche_est_ancetre = _run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+                                "origin/dev", "HEAD"]).returncode == 0
+    assert not branche_est_ancetre, (
+        "`origin/dev` IS an ancestor of HEAD (%s): the negative control of this case has no "
+        "subject any more — pick another branch to prove the guard discriminates, because "
+        "as written it would accept the moving ref" % mb[:12])
+
+    print("witness reference revision: %s (12 chars of a %d-char sha); merge base of the "
+          "branch against origin/dev = %s; delta on the slice file between the two: %r"
+          % (ref_label(), len(ref), mb[:12], delta_ref["on_this_file"]))
+    print("    frozen literals cited at the reference revision: %r — NOT a non-zero "
+          "requirement, a count to preserve" % delta_ref["frozen_literals_cited_at_ref"])
+    print("    negative control (same checks, the moving ref): `origin/dev` is an ancestor "
+          "of HEAD = %s -> the guard REFUSES it, so the pin is a control and not a sentence"
+          % branche_est_ancetre)
+
+
 # --------------------------------------------------------------------------- limite
 
 
@@ -862,7 +974,7 @@ def test_limite_the_declared_frozen_literals_are_the_two_protocols_and_stay_verb
         if n_ref != n_head:
             ecarts.append("frozen literal %r: %d occurrence(s) at %s -> %d at HEAD "
                           "(the reader of that literal goes silent, with no error)"
-                          % (lit, n_ref, REF_REF, n_head))
+                          % (lit, n_ref, ref_label(), n_head))
         # case is part of "verbatim": `Room:` keeps the exact-form count intact
         ci_ref = sum(flat(git_show(rel)).lower().count(lit.lower()) for rel in SLICE)
         ci_head = sum(flat(head_text(rel)).lower().count(lit.lower()) for rel in SLICE)
@@ -1128,7 +1240,7 @@ def test_erreur_a_forgotten_file_is_named_with_its_recomputed_lines(tmp_path):
     lignes = sorted({n for rel, n, _ in trouves if rel == oublie})
     assert lignes == attendu, (
         "%s: the scan reported line(s) %r, this bank recomputes %r from the same bytes "
-        "(%s)" % (oublie, lignes, attendu, REF_REF))
+        "(%s)" % (oublie, lignes, attendu, ref_label()))
 
     # discrimination of the same call, file by file: the English neighbour sorts 0
     s = scan([NEIGHBOUR_REL], cwd=root)
@@ -1137,7 +1249,7 @@ def test_erreur_a_forgotten_file_is_named_with_its_recomputed_lines(tmp_path):
         "the translated neighbour must be silent:\n%r" % out_of(s))
     print("witness forgotten file: %s (bytes of %s) -> rc=1, %d line(s) named, %d "
           "recomputed; neighbour %s alone -> rc=0 silent"
-          % (oublie, REF_REF, len(lignes), len(attendu), NEIGHBOUR_REL))
+          % (oublie, ref_label(), len(lignes), len(attendu), NEIGHBOUR_REL))
 
     # positive half: the live file is translated
     precondition_translated()
