@@ -1150,6 +1150,38 @@ def _familles_par_sonde(lint):
     return table, inclasses
 
 
+def _diagnostic_familles(lint, etiquette):
+    """(rapport, ecarts) — la DIAGNOSE d'un linter, séparée du run qui la consomme.
+
+    Séparer la diagnose du run est ce qui la rend EXERÇABLE sur des `lint` injectés. Un écart
+    nommé est une affirmation (« la famille X est perdue », « cette sonde ne rend plus rien ») :
+    une affirmation qu'on ne peut pas exécuter sur une entrée connue n'est pas prouvée — elle
+    ne serait qu'une intention de message. Le cas `test_erreur_la_diagnose_nomme_…` l'exerce
+    sur trois linters bidons, dont un linter muet que le banc doit nommer.
+
+    Trois gardes de non-vacuité, sans lesquelles « aucune famille perdue » serait vrai à tort :
+
+    1. la comparaison porte sur la LISTE des familles, jamais sur un décompte total ;
+    2. une sonde devenue muette est NOMMÉE (elle ne prouve plus rien sur sa famille) ;
+    3. un message non classé est REMONTÉ, pas avalé : il signalerait un libellé à reclasser.
+    """
+    rapport, ecarts = [], []
+    table, non_classes = _familles_par_sonde(lint)
+    ecarts.extend("%s : %s" % (etiquette, m) for m in non_classes)
+    atteintes = set()
+    for _, _, familles in table:
+        atteintes |= familles
+    perdues = FAMILLES_ATTENDUES - atteintes
+    if perdues:
+        ecarts.append("%s : familles de refus PERDUES %s" % (etiquette, sorted(perdues)))
+    for nom, n_refus, familles in table:
+        rapport.append((etiquette, nom, n_refus, sorted(familles)))
+        if n_refus == 0:
+            ecarts.append("%s : la sonde %r ne rend AUCUN refus — sonde devenue muette, "
+                          "elle ne prouve plus rien" % (etiquette, nom))
+    return rapport, ecarts
+
+
 def test_nominal_les_familles_de_refus_atteignables_sont_gelees(clone_tip):
     """Nominal — les 3 copies du tip rendent l'ENSEMBLE gelé des familles de refus.
 
@@ -1159,59 +1191,102 @@ def test_nominal_les_familles_de_refus_atteignables_sont_gelees(clone_tip):
 
     Trois gardes de non-vacuité, sans lesquelles le cas serait tautologique :
 
-    1. l'ensemble atteint doit être NON VIDE (un `lint` muet — mutation B1 — le vide, et
+    1. la comparaison porte sur la LISTE, jamais sur un décompte total ;
+    2. `lint` rend un ensemble NON VIDE (un linter muet — mutation B1 — le vide, et
        « aucune famille perdue » serait alors vrai à tort) ;
-    2. chaque sonde doit rendre AU MOINS un refus : une sonde devenue muette ne prouve plus
-       rien sur la famille qu'elle visait ;
-    3. chaque famille attendue doit être RÉELLEMENT atteignable : une famille qu'aucune sonde
-       n'atteint ne serait pas gélée, seulement absente — et sa perte passerait inaperçue.
+    3. chaque sonde doit rendre AU MOINS un refus : une sonde devenue muette ne prouve plus
+       rien sur la famille qu'elle visait.
+
+    La diagnose elle-même est exercée séparément sur des `lint` injectés, par
+    `test_erreur_la_diagnose_nomme_la_famille_perdue_et_la_sonde_muette` — sans quoi ses
+    messages d'écart ne seraient qu'une intention jamais exécutée.
     """
-    rapport, ecarts, inclasses = [], [], []
+    rapport, ecarts = [], []
     for rel in COPIES_LINTER:
         mod = _charge_linter(clone_tip["dir"] / rel, nom="fam_" + rel.replace("/", "_"))
-        table, non_classes = _familles_par_sonde(mod.lint)
-        inclasses.extend("%s : %s" % (rel, m) for m in non_classes)
-        atteintes = set()
-        for _, _, familles in table:
-            atteintes |= familles
-        perdues = FAMILLES_ATTENDUES - atteintes
-        if perdues:
-            ecarts.append("%s : familles de refus PERDUES %s" % (rel, sorted(perdues)))
-        for nom, n_refus, familles in table:
-            rapport.append((rel, nom, n_refus, sorted(familles)))
-            if n_refus == 0:
-                ecarts.append("%s : la sonde %r ne rend AUCUN refus — sonde devenue muette, "
-                              "elle ne prouve plus rien" % (rel, nom))
+        sous_rapport, sous_ecarts = _diagnostic_familles(mod.lint, rel)
+        rapport.extend(sous_rapport)
+        ecarts.extend(sous_ecarts)
         print("witness familles %s (tip %s) : %s"
               % (rel, clone_tip["head"][:10],
-                 " | ".join("%s=%s" % (n, f) for _, n, _, f in
-                            [r for r in rapport if r[0] == rel])))
+                 " | ".join("%s=%s" % (n, f) for _, n, _, f in sous_rapport)))
 
     assert not ecarts, (
         "le linter de l'arbre a perdu des FAMILLES de refus : un décompte total peut rester "
         "plausible après la disparition d'un contrôle, pas cette liste.\n  - "
-        + "\n  - ".join(ecarts)
-        + ("\n  messages non classés (reclasser dans CLASSEMENT_REFUS) :\n  - "
-           + "\n  - ".join(inclasses) if inclasses else "")
-    )
+        + "\n  - ".join(ecarts))
     for rel in COPIES_LINTER:
         atteintes = frozenset().union(*[set(f) for r, _, _, f in rapport if r == rel])
         assert atteintes, (
             "%s : aucune famille de refus atteignable — un linter muet n'est pas un linter "
             "conforme" % rel)
-
-    # 4. Le classement ne DEVINE pas : un message inconnu n'est rattaché à aucune famille.
-    #    Contrôle de la route de repli, sans quoi un libellé non reconnu serait silencieusement
-    #    rattaché à une famille et masquerait la perte qu'il devrait signaler.
-    assert _famille_de("un message qui n'appartient à aucune famille connue") is None, (
-        "un message INCLASSABLE doit rendre None, jamais une famille par défaut : sinon un "
-        "refus disparaîtrait sans que l'ensemble perde quoi que ce soit")
-    assert _famille_de("missing section: « Hors-scope »") == "section", (
-        "le classement doit reconnaître l'un des refus réels du linter")
-    print("witness classement : repli None et « section » reconnu")
-
     print("witness familles gelées : %d familles attendues %s"
           % (len(FAMILLES_ATTENDUES), sorted(FAMILLES_ATTENDUES)))
+
+
+def test_erreur_la_diagnose_nomme_la_famille_perdue_et_la_sonde_muette():
+    """Erreur — la diagnose NOMME la famille perdue, et la sonde qui ne rend plus rien.
+
+    Le cas exerce `_diagnostic_familles` sur des `lint` INJECTÉS, pour trois classes de
+    linter : intact, privé d'une famille, muet. C'est ce qui rend l'affirmation exécutable :
+    un message d'écart qu'on ne peut pas produire sur une entrée connue ne prouve rien.
+
+    Il porte aussi le sort de l'erreur RÉELLE du pipeline : le linter muet. Un banc qui
+    comparerait seulement les familles perdantes serait VERT sur un linter qui n'analyse plus
+    rien — « aucune famille perdue » devient vrai à tort. La famille perdue ET la vacuité
+    doivent être dites.
+    """
+    def lint_intact(task):
+        body = task.get("body") or ""
+        if not body.strip():
+            return ["empty body"]
+        issues = []
+        if "Context & Objective" not in body:
+            issues.append("missing section: « Context & Objective »")
+        if "Feature:" not in body:
+            issues.append("Gherkin: no « Feature: / Fonctionnalité: » block")
+        if "Scenario:" not in body:
+            issues.append("Gherkin: 0 scenario(s), minimum 2 (nominal + edge/error)")
+        if "Given" not in body:
+            issues.append("Gherkin: 0 step(s) Given/When/Then, minimum 3")
+        if "DoR" not in body:
+            issues.append("DoR missing")
+        if "DoD" not in body:
+            issues.append("DoD missing")
+        if "Never" not in body:
+            issues.append("guardrails: no explicit prohibition")
+        return issues
+
+    # 1. intact : aucune famille perdue, aucune sonde muette, aucun message inclassable
+    _, ecarts = _diagnostic_familles(lint_intact, "intact")
+    assert not ecarts, (
+        "un linter qui rend les 8 familles ne doit produire AUCUN écart : %r" % ecarts)
+
+    # 2. privé de la famille « section » : l'écart la NOMME
+    _, ecarts = _diagnostic_familles(
+        lambda t: [m for m in lint_intact(t) if "section" not in m], "sans_section")
+    assert any("PERDUES" in e and "section" in e for e in ecarts), (
+        "la diagnose doit NOMMER la famille perdue « section » : %r" % ecarts)
+
+    # 3. MUET : l'écart NOMME la vacuité, sinon « aucune famille perdue » serait vrai à tort
+    _, ecarts = _diagnostic_familles(lambda t: [], "muet")
+    assert any("PERDUES" in e for e in ecarts), (
+        "un linter muet a perdu TOUTES les familles : %r" % ecarts)
+    assert any("muette" in e for e in ecarts), (
+        "la diagnose doit NOMMER la sonde devenue muette : %r" % ecarts)
+
+    # 4. message INC LASSABLE remonté, jamais avalé (sinon un libellé à reclasser disparaît)
+    _, ecarts = _diagnostic_familles(lambda t: ["libellé inconnu du banc"], "inclassable")
+    assert any("libellé inconnu du banc" in e for e in ecarts), (
+        "un message non classé doit être REMONTÉ, pas ignoré : %r" % ecarts)
+
+    # 5. le classement ne DEVINE pas : un message inconnu n'est rattaché à aucune famille
+    assert _famille_de("un message qui n'appartient à aucune famille connue") is None, (
+        "un message INCLASSABLE doit rendre None, jamais une famille par défaut")
+    assert _famille_de("missing section: « Hors-scope »") == "section", (
+        "le classement doit reconnaître l'un des refus réels du linter")
+    print("witness diagnose : intact=0 écart · famille perdue nommée · muet nommé · "
+          "inclassable remonté · repli None")
 
 
 # Mutations JETABLES, écrites en clair parce qu'elles sont le SUJET des deux cas suivants :
