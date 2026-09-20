@@ -80,6 +80,30 @@ naming. Translating it can break two families the diacritic scan cannot see:
 Both are judged, and the vocabulary is judged on its backticked CITATION with the
 production file that reads each token printed as provenance. A bare English word that
 happens to be a state name is prose; a backticked token is a citation of the contract.
+The assertion is PRESENCE at HEAD, never an exact count — see correction 3 below.
+
+Corrections measured by running this bank against a CORRECT translation
+------------------------------------------------------------------------
+
+The bank was executed against a committed English rendering of the document in a
+throwaway clone (the leg is pasted in the card comment), which is how a bench proves its
+green is reachable and how its own rigidity becomes visible. Three corrections, all of
+the BANK and none of the translator:
+
+1. The machine-vocabulary case pinned the CITATION COUNT reference -> HEAD. Measured on
+   the English rendering: `--no-agent` 4 -> 3, `kanban_block` 6 -> 7, `kanban_complete`
+   2 -> 1. Every token is still taught and every reader still finds its literal — a
+   translation simply reflows the prose that cites them. The case is now PRESENCE at
+   HEAD (>= 1 citation) and the moved counts are PRINTED as diagnostics. Had this not
+   been caught here, a correct `dev-11` would have been sent into a rewrite loop for
+   three reasons that are not defects.
+2. The ledger-rule case appended an accent-FREE line to its clone while the rule it
+   judges has TWO fields: `accented_lines` was never exercised (measured failure:
+   "exercised: {'lines'}"). The appended block now carries both axes, and the case
+   asserts the diacritic is present in the appended line before relying on it.
+3. The card announces "18 citations de littéraux gelés"; measured, the two frozen
+   protocols are cited 1 + 0 times. The case asserts preservation, never a positive
+   count, so the figure is printed as a correction instead of becoming a permanent red.
 
 Two measured exclusions, each with its reason
 ---------------------------------------------
@@ -949,16 +973,26 @@ def test_limite_the_machine_vocabulary_cited_by_the_slice_is_preserved_with_prov
     """Limit — the contract this slice really carries: the code tokens it teaches.
 
     Every backtick token of the slice whose reader is a TRACKED PRODUCTION file
-    (`pipeline/`, `agents/*/scripts/`, `plugins/`) must keep the same number of
-    occurrences reference -> HEAD, counted on FLATTENED text. A token with no reader is
-    prose and is deliberately NOT judged; the vocabulary and its provenance are printed,
-    so a red is diagnosable.
+    (`pipeline/`, `agents/*/scripts/`, `plugins/`) must still be CITED at least once at
+    HEAD, counted on FLATTENED text: the document keeps teaching the contract, so its
+    reader is not orphaned. A token with no reader is prose and is deliberately NOT
+    judged; the vocabulary and its provenance are printed, so a red is diagnosable.
+
+    Why PRESENCE and not an exact count — a correction measured on a committed English
+    simulation of this very document (see the module docstring): pinning the count reds a
+    CORRECT translation, because a translation legitimately reflows the prose that cites
+    the tokens. Measured on the simulation: `--no-agent` 4 -> 3, `kanban_block` 6 -> 7,
+    `kanban_complete` 2 -> 1 — three tokens whose citation count follows the phrasing while
+    every token is still taught and every reader still finds its literal. The COUNT is
+    therefore contractual for the two FROZEN protocols only (asserted exactly by the
+    previous case), and printed here as a diagnostic: a citation count the translation
+    moved is not a defect of the translation.
 
     Two measured exclusions, both PRINTED: the FR gate labels the human decision of
     2026-09-20 translates (pinning them would red a correct translation), and the
     placeholder-bearing spans whose bracketed placeholder the translation renames.
-    Falsifiability is EXECUTED in the same run: a copy of the document with one cited
-    token renamed must red the very function that judges it.
+    Falsifiability is EXECUTED in the same run on the same call form: a copy of the
+    document with one cited token renamed must red the very function that judges it.
     """
     precondition_translated()
     ref_all = flat(git_show(SLICE[0]))
@@ -972,13 +1006,18 @@ def test_limite_the_machine_vocabulary_cited_by_the_slice_is_preserved_with_prov
         "the translated gate labels are absent from the exclusion set (%r): the vocabulary "
         "would pin French tokens the human decision turns into English" % (sorted(excl),))
 
-    ecarts = []
+    ecarts, mobilises = [], []
     for span, prov in sorted(vocab.items()):
         cite = cited_span(span)
         n_ref, n_head = ref_all.count(cite), head_all.count(cite)
-        if n_ref != n_head:
-            ecarts.append("%s (read by %s): %d citation(s) -> %d"
-                          % (cite, prov, n_ref, n_head))
+        if n_head < 1:
+            ecarts.append("%s (read by %s): cited %d time(s) at %s, %d at HEAD — the "
+                          "document no longer teaches this contract, so the file that "
+                          "reads it goes silent with no error"
+                          % (cite, prov, n_ref, REF_REF, n_head))
+        elif n_ref != n_head:
+            mobilises.append("%s (read by %s): %d -> %d citation(s)"
+                             % (cite, prov, n_ref, n_head))
     assert not ecarts, (
         "machine contracts of the slice were damaged by the translation:\n  - "
         + "\n  - ".join(ecarts)
@@ -990,16 +1029,20 @@ def test_limite_the_machine_vocabulary_cited_by_the_slice_is_preserved_with_prov
     mutant = head_all.replace(cite, cited_span(cible + "-ALT"))
     assert mutant != head_all, (
         "the mutation was not applied (no occurrence of %s to rename)" % cite)
-    assert mutant.count(cite) != ref_all.count(cite), (
+    assert mutant.count(cite) < 1, (
         "the mutation left %d citation(s) of %s: the case cannot falsify the assertion it "
         "is meant to prove" % (mutant.count(cite), cite))
-    print("witness machine vocabulary: %d token(s) pinned with provenance -> 0 "
-          "discrepancy; %d translated gate label(s) excluded (%r); %d placeholder span(s) "
-          "NOT pinned (%r); mutation renames %s (%d citation(s) -> %d)"
+    print("witness machine vocabulary: %d token(s) pinned with provenance, each cited at "
+          "least once at HEAD -> 0 discrepancy; %d translated gate label(s) excluded "
+          "(%r); %d placeholder span(s) NOT pinned (%r); %d token(s) whose citation COUNT "
+          "the translation moved (diagnostic, not a defect): %r"
           % (len(vocab), len(excl), sorted(excl), len(placeholders),
-             sorted(placeholders), cite, ref_all.count(cite), mutant.count(cite)))
+             sorted(placeholders), len(mobilises), mobilises))
+    print("    falsifiability: %s renamed -> %d citation(s) at HEAD (was %d)"
+          % (cite, mutant.count(cite), ref_all.count(cite)))
     for span, prov in sorted(vocab.items()):
-        print("    %-45r x%d <- %s" % (span[:45], ref_all.count(cited_span(span)), prov))
+        print("    %-45r x%d -> x%d <- %s" % (span[:45], ref_all.count(cited_span(span)),
+                                              head_all.count(cited_span(span)), prov))
 
 
 def test_limite_the_card_format_contract_is_still_taught_and_no_deaccented_french_label():
