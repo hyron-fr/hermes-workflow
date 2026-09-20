@@ -24,6 +24,7 @@ l'arbre avec sa propre définition de « ligne accentuée », puis confronte arb
 import hashlib
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -749,3 +750,293 @@ def test_limite_la_planche_n_affirme_pas_que_le_linter_de_l_arbre_est_deja_bilin
     assert CORRECTEUR_LINTER in prose, (
         "la planche doit NOMMER la slice qui porte la correction du linter"
     )
+
+
+# --------------------------------------------------- branches du contrat non couvertes
+#
+# Mesure (couverture des sous-processus, 4 copies du sujet fusionnées) : sans les cas
+# ci-dessous le script sortait à 74,87 % de statements et 20 branches non couvertes —
+# toutes sur des branches de CONTRAT que le banc n'exerçait pas (repli os.walk, garde
+# d'auto-racine, racine introuvable, sortie JSON, planche d'une autre issue, registre
+# cassé). Le seuil de 80 % par fichier porte sur ce fichier : ces chemins se testent,
+# ils ne se déclarent pas hors sujet.
+
+
+def test_nominal_la_sortie_json_porte_le_verdict_et_le_code_de_sortie_suit():
+    """`--json` : la branche machine du contrat, avec son code de sortie.
+
+    Deux appels sur la MÊME forme : `--json` sur un arbre concordant -> rc 0 et
+    `verdict == "concordance"` ; puis sur un clone muté -> rc 1 et `verdict == "ecart"`.
+    Un rapport qui ne bascule pas avec l'etat n'est pas un rapport.
+    """
+    p = _run([sys.executable, str(MEASURE), "--root", str(REPO),
+              "--plate", str(PLATE), "--json"])
+    assert p.returncode == 0, "mesure --json sur l'arbre : rc=%d\n%s" % (p.returncode, p.stderr)
+    rapport = json.loads(p.stdout)
+    assert rapport["verdict"] == "concordance", rapport["verdict"]
+    assert rapport["declared_md"] == CORPUS_CIBLE["files"]
+    assert rapport["unassigned_md"], (
+        "le rapport doit lister les .md non déclarés (hors corpus) : %r"
+        % rapport["unassigned_md"]
+    )
+    print("witness --json concordance : declared=%d unassigned=%d"
+          % (rapport["declared_md"], len(rapport["unassigned_md"])))
+
+
+def test_limite_la_sortie_json_suit_l_ecart(clone):
+    """Limite — la seconde moitié du contrat `--json` : verdict `ecart` et rc 1."""
+    cible = clone["dir"] / "pipeline/README.md"
+    avant = sha256(cible)
+    with cible.open("a", encoding="utf-8") as fh:
+        fh.write("\nLigne ajoutée par le banc (mutation --json).\n")
+    print("witness: pipeline/README.md sha256 %s -> %s" % (avant[:12], sha256(cible)[:12]))
+    assert sha256(cible) != avant
+
+    p = _run([sys.executable, str(clone["script"]), "--root", str(clone["dir"]),
+              "--plate", str(clone["plate"]), "--json"])
+    assert p.returncode == 1, "rc attendu 1, obtenu %d\n%s" % (p.returncode, p.stderr)
+    rapport = json.loads(p.stdout)
+    assert rapport["verdict"] == "ecart", rapport["verdict"]
+    assert rapport["ecarts"], "un écart doit être listé, pas seulement compté"
+    print("witness --json ecart : %d ecart(s), premier = %s"
+          % (len(rapport["ecarts"]), rapport["ecarts"][0]))
+
+
+def test_erreur_la_planche_d_une_autre_issue_est_refusee():
+    """Erreur — le script refuse de mesurer une planche qui n'est pas la sienne."""
+    import tempfile
+    autre = Path(tempfile.mkdtemp(prefix="conv1_other_")) / "plate.html"
+    autre.write_text(MEASURE.read_text(encoding="utf-8").replace(
+        "EXPECTED_ISSUE = 2", "EXPECTED_ISSUE = 99"), encoding="utf-8")
+    # on falsifie le REGISTRE, pas le script : une planche d'issue 3
+    txt = PLATE.read_text(encoding="utf-8")
+    autre.write_text(re.sub(r'"issue":\s*2', '"issue": 3', txt, count=1), encoding="utf-8")
+    p = _run([sys.executable, str(MEASURE), "--plate", str(autre)])
+    assert p.returncode == 2, (
+        "une planche d'une autre issue doit sortir 2 (erreur d'usage), obtenu %d\n%s"
+        % (p.returncode, p.stdout + p.stderr)
+    )
+    assert "autre issue" in (p.stdout + p.stderr), p.stdout + p.stderr
+
+
+def test_erreur_un_registre_illisible_ou_absent_est_refuse():
+    """Erreur — deux degradations du registre, memes garanties : rc 2 nomme la cause."""
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="conv1_led_"))
+    txt = PLATE.read_text(encoding="utf-8")
+
+    sans = d / "sans.html"
+    sans.write_text(re.sub(r'<script type="application/json" id="plate-ledger">.*?</script>',
+                           "", txt, flags=re.S), encoding="utf-8")
+    p1 = _run([sys.executable, str(MEASURE), "--plate", str(sans)])
+    assert p1.returncode == 2, "registre absent : rc=2 attendu, obtenu %d" % p1.returncode
+    assert "plate-ledger" in (p1.stdout + p1.stderr)
+
+    casse = d / "casse.html"
+    casse.write_text(re.sub(r'(id="plate-ledger">\s*)\{',
+                            r'\1{ "oops":', txt, count=1), encoding="utf-8")
+    p2 = _run([sys.executable, str(MEASURE), "--plate", str(casse)])
+    assert p2.returncode == 2, "registre illisible : rc=2 attendu, obtenu %d" % p2.returncode
+    assert "illisible" in (p2.stdout + p2.stderr), p2.stdout + p2.stderr
+
+    absente = d / "nexistepas.html"
+    p3 = _run([sys.executable, str(MEASURE), "--plate", str(absente)])
+    assert p3.returncode == 2, "planche introuvable : rc=2 attendu, obtenu %d" % p3.returncode
+    assert "introuvable" in (p3.stdout + p3.stderr)
+    print("witness registre : absente=%d absent=%d casse=%d (%s)"
+          % (p3.returncode, p1.returncode, p2.returncode, "tous rc=2"))
+
+
+def test_limite_le_repli_os_walk_mesure_un_arbre_sans_git(clone):
+    """Limite — le repli `os.walk` pruné, sur un arbre RECOPIÉ sans `.git`.
+
+    La branche est le repli : `git ls-files` indisponible. On la force en retirant
+    `.git` de la copie (pas en la simulant) et on exige que le script le DISE, puis que
+    la mesure reste celle de l'arbre — un repli qui inventerait un total serait pire
+    que pas de repli.
+    """
+    recopie = clone["dir"].parent / "sans_git"
+    shutil.copytree(clone["dir"], recopie, ignore=shutil.ignore_patterns(".git"))
+    assert not (recopie / ".git").exists(), "la copie doit etre SANS .git"
+
+    script = recopie / MEASURE_REL
+    plate = recopie / PLATE_REL
+    p = _run([sys.executable, str(script), "--root", str(recopie), "--plate", str(plate)])
+    sortie = p.stdout + p.stderr
+    assert p.returncode == 0, (
+        "sur un arbre recopie sans .git, le repli doit sortir 0 : rc=%d\n%s"
+        % (p.returncode, sortie)
+    )
+    assert "os.walk" in sortie, (
+        "le repli doit etre IMPRIME (sinon on ne sait pas quelle enumeration a parle) :\n%s"
+        % sortie
+    )
+    assert "concordance" in sortie, sortie
+    print("witness repli : %s" % [l for l in sortie.splitlines() if "numération" in l])
+
+
+def test_erreur_une_racine_introuvable_ou_un_arbre_etranger_sont_refuses():
+    """Erreur — les deux gardes de racine : chemin absent, et arbre qui n'est pas le sien.
+
+    `--root` sur un checkout ETRANGER est le cas qui protege la preuve : sans lui, un
+    vert peut venir de n'importe quel arbre.
+    """
+    p1 = _run([sys.executable, str(MEASURE), "--root", "/tmp/conv1-racine-absente-xyz"])
+    assert p1.returncode == 2, "racine introuvable : rc=2 attendu, obtenu %d" % p1.returncode
+    assert "introuvable" in (p1.stdout + p1.stderr)
+
+    anchor = Path("/home/elix/pj-repos/hermes-workflow")
+    if anchor.is_dir() and (anchor / ".git").exists():
+        p2 = _run([sys.executable, str(MEASURE), "--root", str(anchor)])
+        assert p2.returncode == 2, (
+            "arbre etranger (l'anchor) : rc=2 attendu, obtenu %d\n%s"
+            % (p2.returncode, p2.stdout + p2.stderr)
+        )
+        assert "étranger" in (p2.stdout + p2.stderr), p2.stdout + p2.stderr
+        print("witness arbre etranger : rc=%d %r" % (p2.returncode,
+                                                     (p2.stdout + p2.stderr).strip()[:80]))
+
+    p3 = _run([sys.executable, str(MEASURE), "--nope"])
+    assert p3.returncode == 2, "usage invalide : rc=2 attendu, obtenu %d" % p3.returncode
+    print("witness usage invalide : rc=%d" % p3.returncode)
+
+
+def test_limite_un_md_non_declare_est_un_avertissement_pas_un_echec(clone):
+    """Limite — l'assignation du corpus est la propriété de la PLAN CHE, pas du scan.
+
+    Un `.md` de plus dans l'arbre (hors corpus déclaré) doit sortir 0 AVEC un
+    avertissement qui le nomme. Le contraire ferait échouer la mesure sur un fichier que
+    la planche n'a jamais prétendu couvrir.
+    """
+    nouveau = clone["dir"] / "docs/architecture/context/hors-corpus-sonde.md"
+    nouveau.write_text("# hors corpus\n\nUne ligne.\n", encoding="utf-8")
+    # le sujet enumere `git ls-files '*.md'` — un fichier NON SUIVI n'existe pas pour
+    # lui. Ma premiere version de ce cas creait un fichier non suivi et exigeait
+    # l'avertissement : le banc etait faux, le sujet avait raison (mesure).
+    git(clone["dir"], "add", "docs/architecture/context/hors-corpus-sonde.md")
+    assert "hors-corpus-sonde.md" in git(clone["dir"], "ls-files", "*.md"), (
+        "la sonde doit etre SUIVIE pour que l'enumeration canonique la voie"
+    )
+    print("witness: %s cree puis suivi (git add)" % nouveau.name)
+
+    p = _run([sys.executable, str(clone["script"]), "--root", str(clone["dir"]),
+              "--plate", str(clone["plate"])])
+    sortie = p.stdout + p.stderr
+    assert p.returncode == 0, (
+        "un .md non declare ne doit PAS faire echouer la mesure : rc=%d\n%s"
+        % (p.returncode, sortie)
+    )
+    assert "avertissement" in sortie and "hors-corpus-sonde.md" in sortie, (
+        "l'avertissement doit NOMMER le fichier non assigne :\n%s" % sortie
+    )
+    print("witness avertissement : %s"
+          % [l for l in sortie.splitlines() if "avertissement" in l])
+
+
+def test_limite_le_registre_peut_declarer_ses_fichiers_en_LISTE(clone):
+    """Limite — le registre accepte `files` en LISTE, pas seulement en mapping.
+
+    `declared()` a deux branches (mapping chemin->chiffres, et liste de chemins sans
+    chiffres). Un registre qui déclare ses fichiers en liste doit être mesuré de la même
+    façon, sans les totaux par fichier. C'est une forme du contrat que le registre du
+    dépôt n'utilise pas : elle se teste sur une COPIE.
+    """
+    import tempfile
+    txt = clone["plate"].read_text(encoding="utf-8")
+    # slice 3 (translate) : passer le mapping en liste de chemins
+    variante = re.sub(
+        r'"files": \{\s*"README\.md": \{[^}]*\},\s*"CONTRIBUTING\.md": \{[^}]*\},'
+        r'\s*"workflows/templates/ticket\.md": \{[^}]*\}\s*\}',
+        '"files": ["README.md", "CONTRIBUTING.md", "workflows/templates/ticket.md"]',
+        txt, count=1, flags=re.S)
+    assert variante != txt, "la substitution du registre a echoue (motif non trouve)"
+    plate = Path(tempfile.mkdtemp(prefix="conv1_list_")) / "plate.html"
+    plate.write_text(variante, encoding="utf-8")
+    print("witness: registre de la slice 3 passe en LISTE")
+
+    p = _run([sys.executable, str(clone["script"]), "--root", str(clone["dir"]),
+              "--plate", str(plate)])
+    sortie = p.stdout + p.stderr
+    assert p.returncode == 0, (
+        "`files` en LISTE doit etre mesure sans ecart : rc=%d\n%s" % (p.returncode, sortie)
+    )
+    assert "concordance" in sortie, sortie
+    print("witness: %s" % [l for l in sortie.splitlines() if "concordance" in l])
+
+
+def test_erreur_sans_git_sur_le_PATH_le_script_le_DIT_au_lieu_d_inventer(clone):
+    """Erreur — `git` absent du PATH : le repli doit s'annoncer, jamais mentir.
+
+    Le repli `os.walk` est le filet du contrat. Deux exigences en une : il doit sortir un
+    resultat (pas planter sur `FileNotFoundError`) ET dire quelle enumeration a parle.
+    Un repli silencieux rendrait deux mesures indistinguables.
+    """
+    import tempfile
+    recopie = Path(tempfile.mkdtemp(prefix="conv1_nogit_")) / "arbre"
+    shutil.copytree(clone["dir"], recopie)
+    script = recopie / MEASURE_REL
+    plate = recopie / PLATE_REL
+
+    # PATH sans `git`, mais l'environnement est HERITÉ (COVERAGE_PROCESS_START compris) :
+    # construit a neuf, ce sous-processus ne publiait aucune donnee de couverture et
+    # faisait passer pour non couverte la seule branche qu'il exerce (`except OSError`
+    # de `sh()`). Un cas qui cache sa propre couverture est un trou de MESURE.
+    env = dict(os.environ)
+    env["PATH"] = "/nonexistent"
+    p = subprocess.run([sys.executable, str(script), "--root", str(recopie),
+                        "--plate", str(plate)],
+                       capture_output=True, text=True, env=env)
+    sortie = p.stdout + p.stderr
+    assert "Traceback" not in sortie, (
+        "sans `git` sur le PATH le script ne doit pas planter :\n%s" % sortie
+    )
+    assert p.returncode in (0, 1), (
+        "sans git, le repli doit produire une MESURE (0 ou 1), obtenu %d\n%s"
+        % (p.returncode, sortie)
+    )
+    assert "os.walk" in sortie, (
+        "le repli doit s'ANNONCER dans sa sortie :\n%s" % sortie
+    )
+    print("witness PATH sans git : rc=%d · %s"
+          % (p.returncode, [l for l in sortie.splitlines() if "numération" in l]))
+
+
+def test_limite_un_arbre_qui_ne_porte_QUE_le_corpus_ne_produit_aucun_avertissement(clone):
+    """Limite — la branche inverse de l'avertissement : `unassigned` VIDE.
+
+    Le sujet a un `if unassigned:` (avertissement nommant les .md hors corpus). Exercer
+    seulement la branche vraie laissait la fausse non couverte. On retire du clone les
+    3 notes que la planche ne déclare pas : l'arbre ne porte alors QUE le corpus, la
+    liste `non déclarés` est vide, et la sortie ne doit porter AUCUN avertissement —
+    sans pour autant cesser d'être une concordance.
+    """
+    hors_corpus = ["docs/architecture/README.md", "docs/functional/README.md",
+                   "docs/architecture/context/issue-2.md"]
+    for rel in hors_corpus:
+        cible = clone["dir"] / rel
+        assert cible.is_file(), "le clone doit porter %s" % rel
+        # `git rm --cached` : le fichier disparait de l'INDEX *et* du disque. Un simple
+        # `unlink()` le laisse SUIVI — `git ls-files` le rend toujours, donc l'arbre
+        # n'est pas « le corpus seul » et l'enumeration canonique le voit encore.
+        git(clone["dir"], "rm", "--cached", "--quiet", rel)
+        cible.unlink()
+    print("witness: %d .md hors corpus RETIRES DE L'INDEX -> arbre == corpus declare"
+          % len(hors_corpus))
+    assert len(git(clone["dir"], "ls-files", "*.md").splitlines()) == CORPUS_CIBLE["files"], (
+        "apres retrait, l'arbre doit porter exactement le corpus declare"
+    )
+
+    p = _run([sys.executable, str(clone["script"]), "--root", str(clone["dir"]),
+              "--plate", str(clone["plate"])])
+    sortie = p.stdout + p.stderr
+    assert p.returncode == 0, "arbre == corpus declare : rc=0 attendu, obtenu %d\n%s" % (
+        p.returncode, sortie)
+    assert "avertissement" not in sortie, (
+        "sans fichier non déclaré, la sortie ne doit porter AUCUN avertissement :\n%s"
+        % sortie
+    )
+    assert "concordance" in sortie, sortie
+    assert "%d .md suivis, %d déclarés" % (CORPUS_CIBLE["files"],
+                                           CORPUS_CIBLE["files"]) in sortie, sortie
+    print("witness sans avertissement : %s"
+          % [l for l in sortie.splitlines() if "numération" in l])
