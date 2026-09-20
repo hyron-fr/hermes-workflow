@@ -335,10 +335,14 @@ def litteraux_machine_baseline():
     not emphasis), and a program must carry that form in a string (so translating it
     leaves the document describing a message nothing emits).
 
-    Measured on the slice: exactly 3 sites — `[DÉCISION BOUTON] go|no go — issue #N`
-    (SKILL.md:44), `[DÉCISION BOUTON] go — issue #N` (SOUL-template.md:70), emitted at
-    `plugins/gh-triage-buttons/__init__.py:48/53`; and `[setup] terminé` (setup.md:156),
-    the completion line `skills/gh-kanban-bridge/scripts/setup.sh:177` prints.
+    Measured on the slice (this figure is MEASURED by a probe, never hand-kept — an
+    earlier revision of this docstring claimed 3 sites including two `[DÉCISION BOUTON]`
+    citations; the rule as written selects ONE): `[setup] terminé` (setup.md:156 at
+    `origin/dev`), the completion line `skills/gh-kanban-bridge/scripts/setup.sh:177`
+    prints (`log "terminé. board=..."`). The `[DÉCISION BOUTON]` examples live in a bold
+    emphasis span, not an inline-code citation, and the rule reads citations
+    (`CITATION_BACKTICK`) only — deliberately, because bold emphasis is prose the
+    translation must rewrite while backticks are the document CITING a machine form.
 
     The inventory is taken at `origin/dev` and NOT on the live tree: once the translation
     lands, the citations are gone from the documents and a live-only rule would return an
