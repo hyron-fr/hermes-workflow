@@ -338,17 +338,34 @@ def test_nominal_la_page_est_inerte_et_hors_reseau():
         )
 
 
-def test_nominal_le_banc_ne_touche_aucun_fichier():
-    """NOMINAL — le script MESURE : il n'écrit aucun fichier, même en cas d'écart."""
-    avant = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True,
-                           cwd=str(REPO)).stdout
-    res = _run()
-    apres = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True,
-                           cwd=str(REPO)).stdout
-    assert res.returncode == 0
-    assert avant == apres, (
-        f"le script de mesure a modifié l'arbre (il doit être en lecture seule) :\n"
-        f"avant:\n{avant}\naprès:\n{apres}"
+def test_nominal_le_banc_ne_touche_aucun_fichier(tmp_path):
+    """NOMINAL — le script MESURE : il n'écrit rien, ni sur un écart ni sur la page.
+
+    Mesure déterministe : on compare l'état du RÉPERTOIRE des artefacts (contenu + liste)
+    avant/après, et non `git status` — le worktree est PARTAGÉ avec la carte dev, un
+    `git status` bougerait pour des raisons étrangères au script (faux rouge).
+    Le cas est rejoué sur un ÉCART, qui est le chemin où un script bavard écrit volontiers
+    un rapport.
+    """
+    def etat():
+        return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(CONTEXT.iterdir()) if p.is_file()}
+
+    avant = etat()
+    assert _run().returncode == 0
+    assert etat() == avant, (
+        "le script de mesure a modifié le répertoire des artefacts en cas de concordance"
+    )
+
+    copie = _copie(tmp_path, "en-ecart.html")
+    txt = copie.read_text(encoding="utf-8")
+    copie.write_text(txt.replace("Posté dans", "Posté danS", 1), encoding="utf-8")
+    avant_ecart = etat()
+    res = _run(plate=copie)
+    assert res.returncode == 1
+    assert etat() == avant_ecart, (
+        "le script de mesure a écrit un fichier en cas d'écart : il doit rester en lecture "
+        "seule (aucun rapport sur disque)"
     )
 
 
