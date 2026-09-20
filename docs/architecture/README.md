@@ -19,6 +19,6 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 ## Composants
 
 - [[pj-decision]] — Core pur de décision `/ok` (issue #5, slice 4) : calcule la décision portée par un commentaire, ne l'applique jamais.
-- [[pj-bridge-coverage-gate]] — Gate de couverture du pont (issue #5, slice 2) : exemption du parent par soustraction, label `decision`, ancre des graphes, trappe honnête `pj-import`.
+- [[pj-bridge-coverage-gate]] — Gate de couverture du pont (issue #5, slice 2 + 2b) : exemption du parent par soustraction, label `decision`, ancre des graphes, trappe `pj-import` assurée avant d'être proposée.
 - [[pj-bridge-push-ancre]] — Ancre de `issue_number_of()` (issue #5, slice 3) : la carte `done` ferme l'issue de sa ligne de protocole `Importé depuis <url>`, jamais une autre citée dans le corps.
 - [[pj-notify]] — Émetteur des DEUX notifications d'une décision `/ok` (issue #5, slice 5) : l'enfant notifiée puis fermée, le parent notifié jamais fermé ; dédup par décision (jamais par horloge), non-blocant et jamais silencieux.
