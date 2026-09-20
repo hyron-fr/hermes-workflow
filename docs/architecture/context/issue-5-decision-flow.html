@@ -34,9 +34,9 @@ ol.phases b { font-weight:600 }
        padding:10px 12px; margin:8px 0; background:#fbfdfc }
 pre.artefact { margin:6px 0 0; white-space:pre-wrap; overflow-wrap:anywhere;
                font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; color:#22282e }
-pre.mermaid { background:var(--soft); border:1px solid var(--line); border-radius:5px;
-              padding:8px 10px; font:12.5px/1.5 ui-monospace,Menlo,monospace; color:#3c444d;
-              white-space:pre-wrap }
+pre.flow { background:var(--soft); border:1px solid var(--line); border-radius:5px;
+           padding:8px 10px; font:12.5px/1.5 ui-monospace,Menlo,monospace; color:#3c444d;
+           white-space:pre-wrap }
 .hashes { font:11.5px/1.5 ui-monospace,Menlo,monospace; color:var(--mut);
           overflow-wrap:anywhere }
 .note { color:var(--mut); font-size:12px }
@@ -68,7 +68,9 @@ pas</b> — la décision se prend par un commentaire GitHub commençant par <cod
   <li><b>2. Décision — un commentaire GitHub commençant par /ok</b> — Discord notifie avec le lien direct vers le point à statuer ; la décision est un commentaire GitHub commençant par `/ok`. Tout autre commentaire est une demande d'éclaircissement : la carte reste bloquée.</li>
   <li><b>3. Re-blocage — la même issue enfant est rouverte</b> — Si la carte re-bloque sur le même sujet, la même issue enfant est rouverte : jamais une 2ᵉ enfant pour une même carte, un nouveau `/ok` requis.</li>
 </ol>
-<pre class="mermaid">
+<p class="note">Séquence des échanges (source <code>sequenceDiagram</code>, <b>représentation
+  textuelle</b> — aucun script n'est chargé, la page reste hors réseau) :</p>
+<pre class="flow">
 sequenceDiagram
   autonumber
   participant W as Worker
@@ -77,17 +79,14 @@ sequenceDiagram
   participant H as Humain
   W-&gt;&gt;K: bloque la carte (needs_input)
   K-&gt;&gt;E: carte bloquée
-  E-&gt;&gt;E: 1) crée l&#x27;issue ENFANT (0 LLM)
+  E-&gt;&gt;E: 1) crée l'issue ENFANT (0 LLM)
   E-&gt;&gt;H: notifie Discord + lien direct
   H-&gt;&gt;E: commentaire GitHub commençant par /ok
   E-&gt;&gt;K: commente la réponse + unblock
-  E-&gt;&gt;E: ferme l&#x27;issue enfant
+  E-&gt;&gt;E: ferme l'issue enfant
   Note over W,E: re-blocage ⇒ la MEME enfant est rouverte
 
 </pre>
-<script src="../../../bridge/mermaid.min.js"></script>
-<p class="note">Le rendu du flux utilise le <code>mermaid.min.js</code> <b>déjà versionné</b>
-dans le dépôt (<code>bridge/mermaid.min.js</code>) : <b>aucun CDN</b>, aucune requête réseau.</p>
 
 <h2>1. Diagramme de séquence V2 (ratifié)</h2>
 <div class="shot">
