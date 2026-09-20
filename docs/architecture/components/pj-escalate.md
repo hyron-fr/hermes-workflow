@@ -1,7 +1,7 @@
 ---
 type: component
 status: draft
-tags: [architecture, pipeline, escalation, configuration, environment, component]
+tags: [architecture, pipeline, escalation, configuration, environment, publication, component]
 issues: [4]
 ---
 
@@ -19,8 +19,9 @@ issue. Dédupliqué par `(carte, dernier event de blocage)`, idempotent par
 Chaîne déterministe : `scan blocked/triage → dernier event de blocage → dédup
 → résolution (repo, issue) → état du ticket (gh) → thread → post`.
 
-Voir le cadrage [[issue-4]] pour la frontière dépôt ↔ copie exécutée et le
-pattern `_resolve_bin`.
+Voir le cadrage [[issue-4]] pour la frontière dépôt ↔ copie exécutée, le
+pattern `_resolve_bin`, et ci-dessous la chaîne de publication que
+`pipeline/pj_publish.py` ferme.
 
 ## Contrat de configuration
 
@@ -111,6 +112,99 @@ le nominal est bruyant uniquement quand il y a un doute.
 Une exception ne **se propage jamais** : elle ferait tomber le tick entier, donc toutes
 les cartes suivantes. Puits de l'avertissement : `print` → stdout → le fichier de sortie
 du job de cron (`cron/output/<job_id>/*.md`).
+
+## Chaîne de publication — `pipeline/pj_publish.py`
+
+La copie versionnée ne s'exécute jamais directement : le cron exécute la
+**copie installée** (`~/.hermes/profiles/pj-master/scripts/pj_escalate.py`),
+un fichier distinct que rien ne resynchronise. `pipeline/pj_publish.py`
+referme cette frontière dépôt ↔ copie exécutée : il **compare** les deux
+copies, **contrôle les `export` du wrapper**, et **refuse de basculer** tant
+que l'identité et le contrat d'exports ne sont pas établis. L'écart cesse
+d'être une découverte tardive ; il devient un contrôle de livraison.
+
+### L'identité se mesure sur le contenu tel qu'il s'exécute
+
+La copie versionnée est **assainie** (contrat de configuration plus haut :
+aucun identifiant, aucun chemin de machine). L'identité ne peut donc pas
+porter sur une comparaison de sources brutes qui ignorerait l'environnement
+: une copie byte-identique dont le wrapper ne fournit pas les variables
+requises est une **livraison morte** — le tick sortirait en `rc=2`
+(`ConfigError`), bruyamment, et plus aucune escalade ne partirait. Le
+contrôle d'identité est donc **le contenu de la copie + les `export` du
+wrapper** : même contenu, wrapper fautif → l'identité n'est pas établie.
+
+### Le contrôle des exports reconnaît un motif, pas des littéraux
+
+Le wrapper versionné `pj_escalate_all.sh` n'écrit pas
+`export PJ_ESCALATE_CHANNEL_ID=…` trois fois : il lit le `.env` du profil et
+exporte via `case "$name" in PJ_ESCALATE_*) export "$name=$value"`. Le
+contrôle reconnaît donc :
+
+- les `export` **littéraux** (`export VAR`, `export VAR=valeur`, export
+  multi-noms) ;
+- une couverture par **motif** (`export PJ_ESCALATE_*`, ou un `case` dont le
+  motif glob exporte `"$name=$value"`).
+
+Un contrôle qui n'accepterait que la forme littérale **refuserait le
+wrapper du dépôt lui-même**, le mode `--publish` resterait fermé et la
+slice serait **inerte** (le geste humain n'aboutirait jamais). Une
+**affectation non exportée** (`VAR=…`) ne compte toujours pas : c'est
+précisément le défaut que le contrôle existe pour voir. Le banc de tests
+épinge ce cas.
+
+### Le geste de publication — l'ordre est un garde-fou
+
+Le wrapper installé **n'exporte rien** aujourd'hui (un `exec python3
+<chemin>` sec). Basculer la copie assainie **avant** d'ajouter les
+`export` tue le tick : `escalation_config` lève `ConfigError`, le processus
+sort en `rc=2` et plus aucune escalade ne part — silencieusement, puisque
+personne ne lit le fichier de sortie du cron. L'ordre ci-dessous n'est pas
+une commodité ; l'inverser rend le composant muet :
+
+1. **contrôler** — `python3 pipeline/pj_publish.py --check --wrapper
+   <wrapper installé>` : constate l'écart **et** l'absence d'`export`
+   (l'outil nomme la variable manquante et le wrapper fautif) ;
+2. **l'humain** ajoute les `export` des variables requises au wrapper
+   (fichier **hors dépôt** — le worker n'y écrit pas) ;
+3. **re-contrôler** — le même `--check` doit maintenant voir les variables
+   : c'est la preuve que la variable est **vue du tick**, pas seulement
+   écrite ;
+4. **publier** — `--publish --target ~/.hermes/profiles/pj-master/scripts/pj_escalate.py`
+   (la copie que le cron exécute) ; ajouter `--target ~/.hermes/scripts/pj_escalate.py`
+   si la seconde copie installée doit suivre ;
+5. **vérifier par exécution** — un tick du wrapper doit rester **muet**
+   (`rc=0`, 0 escalade parasite) : un tick qui parle pour une carte déjà
+   traitée signale que la bascule a atterri au mauvais endroit.
+
+### Codes de sortie — priorité `2 > 1 > 0`
+
+| code | signification |
+|---|---|
+| `0` | conforme — identité établie, exports conformes |
+| `1` | **écart livré** : divergence entre copies, export manquant, fichier de code sous le seuil (mode `--coverage`) |
+| `2` | **erreur d'exécution** : cible/source/wrapper absente ou illisible, périmètre vide, rapport muet, argument manquant |
+
+`2` est réservé à ce qui **empêche de conclure** : « je n'ai pas pu
+vérifier » n'est jamais un succès (`0`), et ce n'est pas non plus un écart
+constaté (`1`). Le contrôle des exports vient **en premier** dans
+`--check` : inutile de décrire une identité que le wrapper ne rendrait pas
+exécutable. Le mode `--check` est le **défaut** et est **strictement** en
+lecture seule (aucune écriture, aucun `mkdir`, aucun fichier temporaire) ;
+`--publish` exige un `--target` explicite, refuse de basculer si le
+wrapper est fautif, est **idempotent** (une cible déjà identique n'est pas
+réécrite), et **re-vérifie l'identité après écriture** — jamais de
+« publié » sur une écriture non relue. Les diagnostics vont sur stdout ;
+les refus sont **aussi** écrits sur stderr, pour que le « bruyant » ne
+dépende pas du flux qu'un lecteur choisit. Mode d'emploi complet :
+`pipeline/README.md`, section « Publication et contrôle d'identité ».
+
+**État mesuré aujourd'hui (avant le geste humain)** : `--check` sur la
+copie installée rend `rc=1` — 544 lignes divergentes, copie versionnée
+`87c3463b` (574 l.) contre copie installée `0ed3264c` (355 l.). Le wrapper
+versionné, lui, **passe** le contrôle des exports. Le geste d'étape 2-5
+reste à l'humain (hors dépôt) ; sa trace est le commentaire de la carte de
+convergence.
 
 ## Points d'injection
 
