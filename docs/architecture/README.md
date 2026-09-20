@@ -14,6 +14,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 
 - [[issue-1]] — Vérifier le cycle complet du pipeline (issue de test du framework).
 - [[issue-1-verification-contract]] — Contrat de vérification de #1 (protocole C1..C6, provenance des 4 maillons, verdict de convergence).
+- [[issue-5]] — Interface de décision humaine pour les cartes bloquées (Discord + GitHub uniquement).
 
 ## Composants
 
