@@ -1,18 +1,36 @@
-"""Tests du gate de couverture du pont GitHub (renfo 1).
+"""
+Tests du gate de couverture du pont GitHub (renfo 1 + slice 2 de l'issue #5).
 
 Règle : une issue qui recouvre du travail DÉJÀ en vol (PR ouverte, issue ouverte
 avec graphe) ne doit PAS être importée en nouveau graphe — sinon 3 issues pour un
 changement. La décision reste humaine, mais elle est POSÉE au lieu d'être contournée.
-"""
-import importlib.util
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[1]
+Slice 2 (#5) ajoute trois choses, et chaque section du fichier porte son défaut :
+  · l'EXEMPTION du parent : `overlaps = (refs | titres) - {parent} - {self}` ;
+  · l'ancre de `issues_with_graph()` : plus d'issue fantôme (#7 citée par un corps) ;
+  · la TRAPPE corrigée : l'échappatoire proposée doit être RÉELLE.
+"""
+import contextlib
+import importlib.util
+import io
+import json
 import os
+import re
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
-PATH = str(REPO / "bridge" / "gh_kanban_bridge.py")
+REPO = Path(__file__).resolve().parents[1]
+
+# Quelle copie ce run valide-t-il ? Mesuré : ce fichier existe en deux exemplaires
+# homonymes (hermes-workflow = copie versionnée, hermes-experiment = copie que les
+# wrappers EXÉCUTENT) qui ne diffèrent que par cette ligne. Par défaut on juge la
+# copie versionnée ; `PJ_BRIDGE_COPY=<chemin>` fait juger la copie runtime.
+# « tests verts » ≠ « pont réparé » sans les DEUX runs.
+PATH = str(Path(os.environ["PJ_BRIDGE_COPY"]) if os.environ.get("PJ_BRIDGE_COPY")
+            else REPO / "bridge" / "gh_kanban_bridge.py")
 
 
 @pytest.fixture(scope="module")
@@ -130,3 +148,588 @@ def test_closes_line_format(br):
     """t6 doit écrire une ligne de fermeture NATIVE — sinon GitHub ne lie pas la PR."""
     assert br.closes_line(7) == "Closes #7"
     assert "7" in br.closes_line(7)
+
+
+# =========================================================================
+# slice 2 (#5) — EXEMPTION DU PARENT, ANCRE DES GRAPHES, TRAPPE HONNÊTE
+#
+# Trois défauts mesurés, un seul fichier :
+#  1. l'enfant de décision cite son parent PAR CONSTRUCTION : sans exemption il
+#     est refusé à l'import, donc la 2ᵉ itération de la boucle est impossible ;
+#     la règle est une SOUSTRACTION (parent ET soi), jamais « parent ⇒ rien » ;
+#  2. `issues_with_graph()` ramassait TOUS les `#N` des corps de cartes : une
+#     carte citant « la PR #7 de dino-game » faisait entrer une issue FANTÔME ;
+#  3. le commentaire du gate proposait « poser le label `kanban` » alors que
+#     `pull()` fait `continue` dessus : l'échappatoire proposée EMPÊCHAIT l'import.
+# =========================================================================
+
+# ------------------------------------------------------- harnais hors ligne ----
+# Le banc ne doit toucher ni GitHub ni un board réel : les deux binaires du pont
+# sont remplacés par de faux exécutables qui journalisent leurs arguments et
+# rendent un état JSON. Rejouable hors ligne, déterministe, aucune horloge.
+
+FAKE_REPO = "hyron-fr/fake-pont"
+
+_GH_FAKE = '''#!__PY__
+import json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "gh_calls.log"), "a") as fh:
+    fh.write(json.dumps(sys.argv[1:]) + "\\n")
+state = json.load(open(os.path.join(here, "gh_state.json")))
+argv = sys.argv[1:]
+def emit(x):
+    print(json.dumps(x, ensure_ascii=False))
+    sys.exit(0)
+if argv[:2] == ["issue", "list"]:
+    emit(state.get("issues", []))
+if argv[:2] == ["pr", "list"]:
+    emit(state.get("prs", []))
+if argv[:2] == ["issue", "view"]:
+    emit({"comments": (state.get("comments") or {}).get(argv[2], [])})
+emit({})
+'''
+
+_HERMES_FAKE = '''#!__PY__
+import json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "kanban_calls.log"), "a") as fh:
+    fh.write(json.dumps(sys.argv[1:]) + "\\n")
+state = json.load(open(os.path.join(here, "kanban_state.json")))
+argv = sys.argv[1:]
+if "list" in argv and "--json" in argv:
+    print(state.get("tasks_raw", json.dumps(state.get("tasks", []), ensure_ascii=False)))
+    sys.exit(0)
+if "create" in argv:
+    print(json.dumps({"id": state.get("next_task_id", "t_fake")}, ensure_ascii=False))
+    sys.exit(0)
+print("")
+'''
+
+VARIABLES_DU_PONT = ("DRY_RUN", "PJ_IMPORT_TRIAGE", "BRIDGE_VERBOSE")
+
+
+def _faux_binaires(tmp_path):
+    d = Path(tmp_path)
+    for nom, gabarit in (("gh", _GH_FAKE), ("hermes", _HERMES_FAKE)):
+        p = d / nom
+        p.write_text(gabarit.replace("__PY__", sys.executable))
+        p.chmod(0o755)
+    return d
+
+
+@pytest.fixture
+def pont(tmp_path, monkeypatch):
+    """Le pont chargé avec de FAUX binaires `gh` et `hermes` (jamais les vrais)."""
+    d = _faux_binaires(tmp_path)
+    monkeypatch.setenv("GH_REPO", FAKE_REPO)
+    monkeypatch.setenv("KANBAN_BOARD", "pj-fake-pont")
+    for var in VARIABLES_DU_PONT:
+        monkeypatch.delenv(var, raising=False)
+    spec = importlib.util.spec_from_file_location("br_slice2", PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.GH_BIN = str(d / "gh")
+    mod.HERMES_BIN = str(d / "hermes")
+    return mod, d
+
+
+def _tick(pont, gh_state, kanban_state, action="pull"):
+    """Un tick du pont sur un état donné ; rend (appels gh, appels kanban)."""
+    mod, d = pont
+    (d / "gh_state.json").write_text(json.dumps(gh_state, ensure_ascii=False))
+    (d / "kanban_state.json").write_text(json.dumps(kanban_state, ensure_ascii=False))
+    for f in ("gh_calls.log", "kanban_calls.log"):
+        (d / f).write_text("")
+    if action == "pull":
+        mod.pull()
+    elif action == "new":
+        mod.cmd_new()
+    gh_calls = [json.loads(l) for l in (d / "gh_calls.log").read_text().splitlines() if l]
+    kb_calls = [json.loads(l) for l in (d / "kanban_calls.log").read_text().splitlines() if l]
+    return gh_calls, kb_calls
+
+
+def _issue(numero, titre, corps="", labels=(), parent=None):
+    """Une issue telle que `gh issue list` la rend (`parent` est un DICT)."""
+    i = {"number": numero, "title": titre, "body": corps,
+         "url": f"https://github.com/{FAKE_REPO}/issues/{numero}",
+         "labels": [{"name": l} for l in labels],
+         "createdAt": "2020-01-01T00:00:00Z"}       # toujours plus vieille que la grâce
+    if parent is not None:
+        i["parent"] = {"number": parent}
+    return i
+
+
+def _carte_racine(numero, task_id="t_racine", titre=None):
+    """La carte racine d'un graphe : elle porte la ligne écrite par `pull()`."""
+    return {"id": task_id, "title": titre or f"Racine #{numero}", "status": "todo",
+            "body": f"corps de l'issue\n\n—\nImporté depuis "
+                    f"https://github.com/{FAKE_REPO}/issues/{numero}"}
+
+
+def _creees(kb_calls):
+    """Titres des cartes que le pont a réellement créées sur ce tick."""
+    return [c[4] for c in kb_calls if len(c) > 4 and c[3] == "create"]
+
+
+GATE_MARKER = "<!-- pj-coverage-gate -->"
+
+
+def _motifs_gate(gh_calls):
+    """Corps des SEULS commentaires du gate de couverture (marqueur), pas les
+    avis d'import — sinon « le gate a bloqué » ne serait pas mesurable."""
+    return [c[6] for c in gh_calls
+            if c[:2] == ["issue", "comment"] and len(c) > 6 and GATE_MARKER in c[6]]
+
+
+def _lectures(gh_calls):
+    """Appels de LECTURE à `gh` (ceux qui coûtent un aller-retour réseau)."""
+    return [c[:2] for c in gh_calls if c[0] in ("issue", "pr", "label")]
+
+
+# ------------------------------------------ A. exemption du parent (unitaire) --
+
+def test_parent_en_vol_ne_compte_plus_comme_recouvrement(br):
+    """NOMINAL — la raison d'être de la slice : un enfant cite son parent.
+
+    Sans exemption, l'issue enfant de décision (qui cite `#5` par construction)
+    est refusée à l'import : la 2ᵉ itération de la boucle devient impossible.
+    """
+    enfant = {"number": 40, "parent": {"number": 5}, "title": "Décision — carte bloquée",
+              "body": "Sous-issue de #5.\n\nPoint à statuer sur la carte `t_aaa`."}
+    assert 5 in br.issue_refs(enfant["body"])          # la prémisse
+    ctx = {"open_pr_issues": set(), "graph_issues": {5}, "titles": {},
+           "parents": {40: 5}}
+    v = br.coverage_verdict(enfant, ctx)
+    assert v["blocked"] is False
+    assert v["overlaps"] == []
+
+
+def test_parent_soustrait_mais_vrai_chevauchement_conserve(br):
+    """LIMITE — l'exemption du parent ne doit pas blanchir un vrai recouvrement.
+
+    Enfant citant `#5` (parent) ET `#7` (travail en vol non parent) ⇒ bloquée sur
+    `[7]` SEULEMENT. Une règle « parent ⇒ non bloqué » laisserait passer ce doublon.
+    """
+    enfant = {"number": 40, "parent": {"number": 5}, "title": "Décision",
+              "body": "Sous-issue de #5, qui dépend de #7."}
+    ctx = {"open_pr_issues": set(), "graph_issues": {5, 7}, "titles": {},
+           "parents": {40: 5}}
+    v = br.coverage_verdict(enfant, ctx)
+    assert v["overlaps"] == [7]
+    assert v["blocked"] is True
+    assert 5 not in v["overlaps"]
+
+
+def test_exemption_appliquee_avant_la_passe_de_titre(br):
+    """LIMITE — l'exemption vaut AUSSI pour le recouvrement de titre.
+
+    Le titre de l'enfant ressemble à celui du parent par construction ; si la
+    soustraction n'est faite qu'après la passe de titre, le parent revient par la
+    porte de derrière (mesuré : Jaccard 0,8 ≥ 0,34).
+    """
+    enfant = {"number": 40, "parent": {"number": 5},
+              "title": "Refonte graphique des acteurs dino", "body": "Sous-issue de #5."}
+    ctx = {"open_pr_issues": set(), "graph_issues": {5},
+           "titles": {5: "Refonte graphique des acteurs (dino, cactus)"},
+           "parents": {40: 5}}
+    assert br.title_overlap(br.title_tokens(enfant["title"]),
+                            br.title_tokens(ctx["titles"][5])) >= 0.34   # la prémisse
+    v = br.coverage_verdict(enfant, ctx)
+    assert v["blocked"] is False, "le parent est revenu par la passe de titre"
+    assert v["overlaps"] == []
+
+
+def test_repli_sur_le_parent_rendu_par_gh(br):
+    """ERREUR — `parent` est un DICT `{"number": N}` côté `gh`, pas un entier.
+
+    Lu naïvement, l'exemption est SILENCIEUSEMENT perdue : ce cas mesure le repli
+    sur `issue['parent']` quand `ctx['parents']` n'est pas fourni.
+    """
+    enfant = {"number": 40, "parent": {"number": 5}, "title": "Décision",
+              "body": "Sous-issue de #5."}
+    ctx = {"open_pr_issues": set(), "graph_issues": {5}, "titles": {}}
+    v = br.coverage_verdict(enfant, ctx)
+    assert v["blocked"] is False, "un parent en dict a été lu comme absent"
+
+
+def test_ctx_parents_en_dict_ne_perd_pas_l_exemption(br):
+    """ERREUR — la carte `ctx['parents']` peut elle-même porter un dict (forme `gh`)."""
+    enfant = {"number": 40, "parent": {"number": 5}, "title": "Décision",
+              "body": "Sous-issue de #5."}
+    ctx = {"open_pr_issues": set(), "graph_issues": {5}, "titles": {},
+           "parents": {40: {"number": 5}}}
+    assert br.coverage_verdict(enfant, ctx)["blocked"] is False
+
+
+def test_parent_rendu_comme_entier_nu_reste_lu(br):
+    """ERREUR — certaines sources rendent `parent` comme un entier nu.
+
+    La lecture doit accepter les DEUX formes (dict `gh` et entier) : une lecture
+    qui ne gère que le dict perdrait l'exemption sur un appelant qui normalise.
+    """
+    dict_ = {"number": 40, "parent": {"number": 5}, "title": "Décision",
+             "body": "Sous-issue de #5."}
+    entier = {"number": 40, "parent": 5, "title": "Décision", "body": "Sous-issue de #5."}
+    ctx = {"open_pr_issues": set(), "graph_issues": {5}, "titles": {}}
+    assert br.coverage_verdict(dict_, ctx)["blocked"] is False
+    assert br.coverage_verdict(entier, ctx)["blocked"] is False
+    ctx_table = {"open_pr_issues": set(), "graph_issues": {5}, "titles": {},
+                 "parents": {40: 5}}
+    assert br.coverage_verdict(entier, ctx_table)["blocked"] is False
+
+
+def test_parent_absent_ne_soustrait_rien(br):
+    """ERREUR — `parent: None` (issue racine) : aucune exemption, verdict inchangé."""
+    racine = {"number": 9, "parent": None, "title": "Racine", "body": "corrige #5"}
+    ctx = {"open_pr_issues": set(), "graph_issues": {5}, "titles": {}, "parents": {9: None}}
+    v = br.coverage_verdict(racine, ctx)
+    assert v["blocked"] is True and v["overlaps"] == [5]
+
+
+def test_la_table_des_parents_lit_les_trois_formes(br):
+    """ERREUR — la table `parents` se construit depuis la MÊME liste d'issues.
+
+    Trois formes rencontrées : `{"number": N}` (sortie `gh`), entier nu (appelant
+    qui normalise), et absence (`parent: None`). Une seule forme gérée = exemption
+    perdue en silence sur les autres.
+    """
+    issues = [
+        {"number": 40, "parent": {"number": 5}},
+        {"number": 41, "parent": 5},
+        {"number": 42, "parent": None},
+        {"number": 43},
+    ]
+    assert br.issue_parents(issues) == {40: 5, 41: 5, 42: None, 43: None}
+
+
+def test_ctx_sans_cle_parents_reste_compatible(br):
+    """LIMITE — rétrocompatibilité ET anti-« exemption universelle ».
+
+    Un appelant ancien (ctx sans la clé) et une issue sans parent doivent garder
+    le verdict d'aujourd'hui : si l'exemption devenait inconditionnelle, ce cas
+    passerait au vert en blanchissant un vrai doublon.
+    """
+    ctx = {"open_pr_issues": set(), "graph_issues": {5}, "titles": {}}
+    racine = {"number": 9, "parent": None, "title": "Racine", "body": "corrige #5"}
+    assert br.coverage_verdict(racine, ctx)["blocked"] is True
+
+
+# ------------------------------------------- B. ancre de issues_with_graph ----
+
+_BOARD_REEL = [
+    _carte_racine(1, "t_r1"),
+    _carte_racine(2, "t_r2", titre="Rewrite in english"),
+    _carte_racine(4, "t_r4", titre="Versionner pj_escalate.py"),
+    _carte_racine(5, "t_r5", titre="Interface de décision humaine"),
+    # les cartes de graphe : titre `t<n> … #<n>` (ancre de titre, pas de ligne d'import)
+    {"id": "t1", "title": "t6 submitted #1", "status": "todo", "body": "producteur #1"},
+    {"id": "t2", "title": "t6 submitted #2", "status": "todo",
+     "body": "Le corps de la PR porte `Closes #2` : sans cette ligne GitHub ne "
+             "rattache pas la PR (constaté sur la PR #7 de dino-game)."},
+    {"id": "t3", "title": "t6 submitted #4", "status": "todo", "body": "issue #6 distincte"},
+    {"id": "t4", "title": "t6 submitted #5", "status": "todo", "body": "cite #4 et #7"},
+]
+
+
+def test_graph_liste_ignore_les_hash_libres_des_corps(br, monkeypatch):
+    """ERREUR — plus d'issue fantôme : `#7` d'un corps n'est pas un graphe.
+
+    Mesuré sur le board réel : la carte `t6 submitted #2` cite « la PR #7 de
+    dino-game » ; `gh issue view 7` répond « Could not resolve ». Compter ce `#7`
+    ferait refuser une vraie issue sur un chevauchement IMAGINAIRE.
+    """
+    monkeypatch.setattr(br, "kanban", lambda *a, **k: json.dumps(_BOARD_REEL))
+    trouve = br.issues_with_graph()
+    assert 7 not in trouve
+    assert 6 not in trouve
+    assert 9 not in trouve
+
+
+def test_graph_liste_est_exactement_la_verite_du_board(br, monkeypatch):
+    """NOMINAL — la règle ancrée rend EXACTEMENT {1,2,4,5} sur la forme du board réel.
+
+    Deux ancres seulement : la ligne `Importé depuis …/issues/<n>` et le titre
+    `t<n> … #<n>`. Mesuré sur le board réel : 0 manque, 0 faux positif.
+    """
+    monkeypatch.setattr(br, "kanban", lambda *a, **k: json.dumps(_BOARD_REEL))
+    assert br.issues_with_graph() == {1, 2, 4, 5}
+
+
+def test_graph_liste_retient_le_titre_et_ignore_le_corps(br, monkeypatch):
+    """LIMITE — une carte dont le titre porte `t3 grill-me #5` et le corps `#9`.
+
+    Le titre fait foi (5 est retenu), le corps est ignoré (9 ne l'est pas).
+    """
+    board = [{"id": "t5", "title": "t3 grill-me #5", "status": "done",
+              "body": "cette carte mentionne #9 et rien d'autre"}]
+    monkeypatch.setattr(br, "kanban", lambda *a, **k: json.dumps(board))
+    trouve = br.issues_with_graph()
+    assert 5 in trouve
+    assert 9 not in trouve
+
+
+def test_graph_liste_ne_se_vide_pas(br, monkeypatch):
+    """LIMITE anti-tautologie — le correctif ne doit pas rendre un ensemble vide.
+
+    Un `return set()` satisferait tous les cas de faux positif : ce cas l'interdit.
+    """
+    monkeypatch.setattr(br, "kanban", lambda *a, **k: json.dumps(_BOARD_REEL))
+    assert br.issues_with_graph() != set()
+
+
+# --------------------------------- C+D. objet de décision et trappe honnête ----
+
+def test_le_label_de_decision_est_le_nom_gele(br):
+    """NOMINAL (interface) — `decision` est le nom gelé de l'objet de décision.
+
+    Surtout PAS `kanban` (« déjà miroir d'une carte » : réutiliser ce nom
+    réécrirait la trappe sous un autre motif) et pas `triage`.
+    """
+    assert hasattr(br, "DECISION_LABEL"), "la constante DECISION_LABEL doit exister"
+    assert br.DECISION_LABEL == "decision"
+    assert br.DECISION_LABEL != br.MIRROR_LABEL
+    assert br.DECISION_LABEL != br.TRIAGE_LABEL
+
+
+def test_un_objet_de_decision_n_est_jamais_importe(pont):
+    """NOMINAL — une issue portant le label de décision est écartée de `pull()`.
+
+    Un objet de décision n'est pas une tâche : mesuré, l'importer déclenche un
+    graphe complet (6 cartes + 11 liens + une room) sous une carte de décision.
+    """
+    mod, _ = pont
+    decision = _issue(60, "Décision — carte t_aaa", "Point à statuer sur `t_aaa`.",
+                      labels=["decision"], parent=5)
+    normale = _issue(61, "Ajouter un compteur de parties", "nouvelle fonctionnalité")
+    gh, kb = _tick(pont, {"issues": [decision, normale], "prs": []},
+                   {"tasks": [], "next_task_id": "t_cree"})
+    assert _creees(kb) == ["Ajouter un compteur de parties"]
+    for appel in gh:
+        assert "60" not in appel, f"l'objet de décision a été touché : {appel}"
+
+
+def test_objet_de_decision_coute_zero_appel_de_gate(pont):
+    """LIMITE — exclusion par le prédicat de labels, AVANT tout travail de gate.
+
+    Mesure différentielle : le tick portant l'objet de décision a exactement le
+    même nombre d'appels que le même tick sans lui.
+    """
+    mod, _ = pont
+    commune = {"issues": [_issue(61, "Ajouter un compteur de parties", "neuf")], "prs": []}
+    board = {"tasks": [], "next_task_id": "t_cree"}
+    sans, _ = _tick(pont, commune, board)
+    avec, _ = _tick(pont, {"issues": commune["issues"] + [
+        _issue(60, "Décision — carte t_aaa", "Point à statuer sur `t_aaa`.",
+               labels=["decision"], parent=5)], "prs": []}, board)
+    assert len(avec) == len(sans), f"{len(avec)} appels avec l'objet contre {len(sans)} sans"
+    assert [c[:2] for c in avec] == [c[:2] for c in sans]
+
+
+def test_l_objet_de_decision_n_est_pas_candidat_au_drill(pont):
+    """ERREUR — `cmd_new()` l'exclut aussi, sinon le bot le drillerait."""
+    mod, _ = pont
+    decision = _issue(60, "Décision — carte t_aaa", "Point à statuer.",
+                      labels=["decision"], parent=5)
+    normale = _issue(61, "Ajouter un compteur de parties", "neuf")
+    _tick(pont, {"issues": [decision, normale], "prs": []}, {"tasks": []}, action="prep")
+    (Path(mod.GH_BIN).parent / "gh_state.json").write_text(
+        json.dumps({"issues": [decision, normale], "prs": []}))
+    (Path(mod.GH_BIN).parent / "gh_calls.log").write_text("")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        mod.cmd_new()
+    candidats = json.loads(buf.getvalue())
+    assert [c["number"] for c in candidats] == [61]
+
+
+def test_le_gate_ne_propose_plus_de_poser_le_label_kanban(pont):
+    """ERREUR — la trappe cesse de mentir (elle proposait un geste qui bloque).
+
+    Le commentaire posté sur une issue bloquée ne doit plus contenir la phrase
+    « poser le label `kanban` » : c'est l'échappatoire qui EMPÊCHE l'import.
+    """
+    mod, _ = pont
+    bloquee = _issue(70, "Refonte graphique des acteurs", "suite de #5")
+    gh, _ = _tick(pont, {"issues": [bloquee], "prs": []},
+                  {"tasks": [_carte_racine(5)]})
+    corps = _motifs_gate(gh)
+    assert corps, "aucun commentaire de gate posté : la prémisse du test est fausse"
+    assert "poser le label `kanban`" not in corps[0]
+
+
+def test_l_echappatoire_proposee_par_le_gate_fonctionne(pont):
+    """LIMITE — l'échappatoire nommée par le gate doit être RÉELLE (bypass respecté).
+
+    L'issue candidate est CONSTRUITE POUR ÊTRE REFUSÉE sans le label : elle cite `#5`,
+    qui est en vol. Deux mesures dans le même cas — contrôle négatif (sans le label,
+    elle est bloquée) puis mesure (avec le label, elle passe) — sinon un import qui
+    réussit par le chemin normal ferait croire le bypass respecté.
+    """
+    mod, _ = pont
+    bloquee = _issue(70, "Refonte graphique des acteurs", "suite de #5")
+    gh, _ = _tick(pont, {"issues": [bloquee], "prs": []},
+                  {"tasks": [_carte_racine(5)]})
+    corps = _motifs_gate(gh)
+    assert corps, "aucun commentaire de gate posté : la prémisse du test est fausse"
+    labels = re.findall(r"label\s+`([^`]+)`", corps[0])
+    assert labels, "le gate ne nomme AUCUNE échappatoire : l'humain n'a pas d'issue"
+    propose = labels[-1]
+    assert propose not in (mod.MIRROR_LABEL, mod.TRIAGE_LABEL), (
+        f"le gate propose `{propose}`, que `pull()` écarte : la trappe ment toujours")
+
+    board = {"tasks": [_carte_racine(5)], "next_task_id": "t_bypass"}
+    # contrôle négatif : la MÊME issue, sans le label, est refusée par le gate
+    _, kb_sans = _tick(pont, {"issues": [
+        _issue(71, "Ajouter un compteur de parties", "suite de #5")], "prs": []}, board)
+    assert _creees(kb_sans) == [], "la candidate n'est pas en chevauchement : mesure vide"
+    # mesure : le label proposé par le gate ouvre bien l'import
+    _, kb_avec = _tick(pont, {"issues": [
+        _issue(71, "Ajouter un compteur de parties", "suite de #5",
+               labels=[propose])], "prs": []}, board)
+    assert _creees(kb_avec) == ["Ajouter un compteur de parties"], (
+        f"le label proposé (`{propose}`) n'ouvre pas l'import : la trappe ment")
+
+
+def test_le_label_d_echappatoire_est_cree_avant_d_etre_propose(pont):
+    """ERREUR — un label proposé qui n'existe pas n'est pas posable par l'humain.
+
+    Le pont crée le label miroir avant d'importer ; l'échappatoire doit suivre la
+    même règle, sinon « poser le label X » est un geste impossible à exécuter.
+    """
+    mod, _ = pont
+    normale = _issue(61, "Ajouter un compteur de parties", "neuf")
+    gh, _ = _tick(pont, {"issues": [normale], "prs": []},
+                  {"tasks": [], "next_task_id": "t_cree"})
+    crees = {c[2] for c in gh if c[:2] == ["label", "create"] and len(c) > 2}
+    assert mod.IMPORT_OVERRIDE_LABEL in crees, (
+        f"l'échappatoire `{mod.IMPORT_OVERRIDE_LABEL}` n'est jamais créée : {crees}")
+
+
+def test_une_creation_de_label_ratee_est_bruyante(pont):
+    """ERREUR — un échec de création de label remonte, il n'est pas avalé.
+
+    Sans cette garde, la trappe proposerait un label que le pont n'a jamais réussi
+    à créer : l'humain tenterait un geste impossible, sans diagnostic.
+    """
+    mod, d = pont
+    for nom in ("gh", "hermes"):
+        script = (d / nom).read_text().replace(
+            'state = json.load(open(os.path.join(here, "gh_state.json")))',
+            'if sys.argv[1:2] == ["label"]:\n'
+            '    sys.stderr.write("boom: label create refuse\\n")\n'
+            '    sys.exit(1)\n'
+            'state = json.load(open(os.path.join(here, "gh_state.json")))')
+        (d / nom).write_text(script)
+    (d / "gh_state.json").write_text(json.dumps({"issues": [], "prs": []}))
+    with pytest.raises(Exception) as exc:
+        mod.ensure_label("pj-import", "0e8a16", "Import forcé")
+    assert "boom" in str(exc.value) or "label" in str(exc.value).lower(), (
+        f"l'échec n'est pas diagnostiquable : {exc.value}")
+
+
+# ------------------------------------ E. le parent n'est plus en vol (pull() ---
+
+def test_pull_importe_l_enfant_qui_cite_son_parent(pont):
+    """NOMINAL (intégration) — le cas réel : l'enfant #40 cite son parent #5 en vol.
+
+    Mesure le comportement là où il compte : la carte est réellement créée.
+    """
+    mod, _ = pont
+    enfant = _issue(40, "Décision — carte t_aaa bloquée",
+                    "Sous-issue de #5.\n\nPoint à statuer sur la carte `t_aaa`.", parent=5)
+    gh, kb = _tick(pont, {"issues": [enfant], "prs": []}, {"tasks": [_carte_racine(5)]})
+    assert _creees(kb) == ["Décision — carte t_aaa bloquée"], (
+        "l'enfant de décision n'est pas importable : la boucle ne peut pas démarrer")
+    assert not _motifs_gate(gh), "le gate a bloqué un enfant exempté"
+
+
+def test_pull_bloque_encore_l_enfant_qui_cite_une_autre_issue(pont):
+    """LIMITE (intégration) — parent exempté, mais un AUTRE en vol subsiste.
+
+    Le motif posté ne doit nommer QUE le vrai chevauchement (`#7`), jamais le
+    parent `#5` : un motif qui cite le parent rend la décision humaine illisible.
+    """
+    mod, _ = pont
+    enfant = _issue(40, "Décision — carte t_aaa bloquée",
+                    "Sous-issue de #5, qui dépend de #7.", parent=5)
+    gh, kb = _tick(pont, {"issues": [enfant], "prs": []},
+                   {"tasks": [_carte_racine(5), _carte_racine(7)]})
+    assert _creees(kb) == []
+    corps = _motifs_gate(gh)
+    assert corps, "le vrai chevauchement #7 n'a pas été signalé"
+    assert "#7" in corps[0]
+    assert "#5" not in corps[0], "le parent exempté est compté comme recouvrement"
+
+
+def test_pull_ne_voit_plus_l_issue_fantome_du_board(pont):
+    """ERREUR (intégration) — une carte citant « la PR #7 de dino-game » ne fait
+    plus bloquer une issue qui cite #7 ; et une vraie couverture bloque toujours.
+    """
+    mod, _ = pont
+    board = [_carte_racine(5),
+             {"id": "t6", "title": "t6 submitted #2", "status": "todo",
+              "body": "le corps de la PR porte `Closes #2` (constaté sur la PR #7 de dino-game)"}]
+    qui_cite_le_fantome = _issue(12, "Ajouter un compteur de parties", "suite de #7")
+    qui_cite_un_vrai = _issue(13, "Refonte graphique", "suite de #5")
+    _, kb = _tick(pont, {"issues": [qui_cite_le_fantome, qui_cite_un_vrai], "prs": []},
+                  {"tasks": board})
+    assert _creees(kb) == ["Ajouter un compteur de parties"], (
+        "une issue fantôme bloque encore un import légitime")
+
+
+def test_pull_ne_fait_aucune_passe_reseau_supplementaire(pont):
+    """LIMITE — l'exemption du parent ne coûte AUCUNE passe réseau de plus.
+
+    Deux ticks IMPORTABLES (donc le même chemin) : avec et sans parent. Les
+    lectures (`--json`) doivent être identiques — `parent` vient du `gh issue list`
+    DÉJÀ fait, jamais d'un `gh issue view <n> --json parent` par issue en vol.
+    """
+    mod, _ = pont
+    board = {"tasks": [_carte_racine(5)], "next_task_id": "t_cree"}
+    avec_parent, _ = _tick(pont, {"issues": [
+        _issue(40, "Décision — carte t_aaa", "Sous-issue de #5.", parent=5)], "prs": []}, board)
+    sans_parent, _ = _tick(pont, {"issues": [
+        _issue(40, "Décision — carte t_aaa", "Point à statuer.")], "prs": []}, board)
+
+    def lectures(appels):
+        return [c[:2] for c in appels if "--json" in c]
+
+    assert lectures(avec_parent) == lectures(sans_parent), (
+        f"{lectures(avec_parent)} contre {lectures(sans_parent)}")
+    assert lectures(avec_parent) == [["issue", "list"], ["pr", "list"]], (
+        f"lectures inattendues : {lectures(avec_parent)}")
+    listes = [c for c in avec_parent if c[:2] == ["issue", "list"]]
+    champs = [a for c in listes for a in c if a.startswith("number,title,body")]
+    assert champs and "parent" in champs[0], (
+        f"`gh issue list` ne demande pas `parent` : {champs}")
+
+
+def test_pull_survit_a_un_board_illisible(pont):
+    """Garde-fou — un board illisible rend le gate indisponible, jamais bloquant.
+
+    Comportement mesuré du pont (le gate est dans un `try`), et condition pour que
+    l'ancrage des graphes ne devienne pas un point de panne du pull.
+    """
+    mod, _ = pont
+    normale = _issue(61, "Ajouter un compteur de parties", "neuf")
+    gh, kb = _tick(pont, {"issues": [normale], "prs": []},
+                   {"tasks": [], "tasks_raw": "{ceci n'est pas du JSON", "next_task_id": "t_x"})
+    assert _creees(kb) == ["Ajouter un compteur de parties"]
+
+
+# -------------------------------------------------- copies versionnées --------
+
+def test_les_deux_copies_versionnees_du_pont_sont_identiques():
+    """ERREUR — `bridge/` et `pipeline/` sont le MÊME fichier, en deux emplacements.
+
+    Mesuré à la base : `sha256 fe7009bc…` sur les trois chemins. Si une seule copie
+    est corrigée, un run « vert » ne dit rien du chemin réellement exécuté — c'est
+    exactement le piège « tests verts ≠ pont réparé » relevé au contrat.
+    """
+    autres = sorted(p for p in (REPO / "bridge" / "gh_kanban_bridge.py",
+                                REPO / "pipeline" / "gh_kanban_bridge.py") if p.exists())
+    assert len(autres) == 2, f"copies attendues absentes : {autres}"
+    premier = autres[0].read_bytes()
+    for p in autres[1:]:
+        assert p.read_bytes() == premier, f"{p} a divergé de {autres[0]}"
