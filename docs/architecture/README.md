@@ -17,4 +17,4 @@ Map of Content of the `docs/architecture/` vault. Every cadrage note
 
 ## Components
 
-_(to be completed by `doc-k` cards as slices are delivered.)_
+- [[pj-lang-lint]] — deterministic language gate for the English corpus.
