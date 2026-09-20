@@ -67,6 +67,73 @@ sous-processus, `poster` pour l'envoi Discord, `conn_factory` pour la base kanba
 défaut = implémentation réelle) : le tick complet s'exerce sans réseau et sans
 exécutable réel.
 
+## Publication et contrôle d'identité `pj_publish.py`
+
+`pj_escalate.py` **s'exécute depuis le profil**, pas depuis ce dépôt : la copie
+installée (`~/.hermes/profiles/pj-master/scripts/pj_escalate.py`) et la copie
+versionnée (`pipeline/pj_escalate.py`) sont deux fichiers distincts, et rien ne les
+rapproche automatiquement. `pipeline/pj_publish.py` **compare** ces deux copies et
+**refuse** de basculer tant que l'écart n'est pas établi — et tant que le wrapper de
+cron n'exporte pas les variables requises que la copie assainie lit dans
+l'environnement.
+
+La copie versionnée est **assainie** (aucun identifiant Discord, aucun chemin de
+machine : voir le tableau ci-dessus). L'identité ne peut donc pas porter sur les octets
+bruts, mais sur le **contenu tel qu'il s'exécute** — contenu identique **et** wrapper
+qui fournit les variables requises.
+
+```bash
+# Contrôle seul (mode par défaut, LECTURE SEULE) : identité + exports du wrapper
+python3 pipeline/pj_publish.py --check --wrapper agents/pj-master/scripts/pj_escalate_all.sh
+
+# Contrôle d'une paire explicite, sur des fixtures
+python3 pipeline/pj_publish.py --check --source pipeline/pj_escalate.py --target /tmp/copie.py
+
+# Publier (bascule) — exige --target explicite, refuse si le wrapper est fautif
+python3 pipeline/pj_publish.py --publish \
+    --target ~/.hermes/profiles/pj-master/scripts/pj_escalate.py
+```
+
+| argument | rôle |
+|---|---|
+| `--check` | **défaut**, lecture seule : aucune écriture, aucun `mkdir`, aucun fichier temporaire |
+| `--publish` | bascule la ou les copies installées (exige `--target`) ; refusée si le wrapper n'exporte pas les requises ; **idempotente** (une cible déjà identique n'est pas réécrite) |
+| `--target` | copie installée à contrôler/basculer — **répétable** ; sans elle, les deux cibles connues sont contrôlées (`<profil>/scripts/` et `~/.hermes/scripts/`) |
+| `--source` | copie versionnée (défaut : `pipeline/pj_escalate.py`, voisin du fichier) |
+| `--wrapper` + `--require-env` | contrôle des `export` **avant** toute bascule ; `--require-env` absent = le contrat de la copie versionnée (`REQUIRED_VARS`) |
+| `--coverage --coverage-json J --diff-base REF` | mode périmètre : refuse un périmètre vide et un rapport qui n'instancie pas le fichier modifié |
+| `--home` | répertoire personnel injectable (défaut : `HOME`) — aucun chemin de machine codé |
+
+Codes de sortie : `0` conforme, `1` écart livré (divergence, export manquant, fichier
+modifié sous le seuil), `2` erreur d'exécution (cible/source/wrapper absent ou
+illisible, périmètre vide, argument manquant). Priorité `2 > 1 > 0`.
+
+### Le geste de publication — l'ordre est un garde-fou
+
+Le wrapper installé **n'exporte rien** aujourd'hui (252 o, `exec python3 <chemin>`
+sec). Basculer la copie assainie **avant** d'ajouter les `export` tue le tick :
+`escalation_config` lève `ConfigError`, le processus sort en `rc=2` et **plus aucune
+escalade ne part** — silencieusement, puisque personne ne lit le fichier de sortie du
+cron. L'ordre ci-dessous n'est donc pas une commodité :
+
+1. **contrôler** : `python3 pipeline/pj_publish.py --check --wrapper <wrapper installé>` —
+   constate l'écart **et** l'absence d'`export` (l'outil nomme la variable et le wrapper) ;
+2. **l'humain** ajoute les `export` des variables requises au wrapper (fichier **hors
+   dépôt** ; le worker n'y écrit pas) ;
+3. **re-contrôler** : le même `--check` doit maintenant voir les variables
+   (`exports du wrapper …: conformes`) — c'est la preuve que la variable est « vue du
+   tick », pas seulement écrite ;
+4. **publier** : `--publish --target ~/.hermes/profiles/pj-master/scripts/pj_escalate.py`
+   (la copie que le cron exécute) ; ajouter `--target ~/.hermes/scripts/pj_escalate.py`
+   si la seconde copie installée doit suivre ;
+5. **vérifier par exécution** : lancer un tick du wrapper et vérifier qu'il reste
+   **muet** (`rc=0`, 0 escalade parasite). Un tick qui parle pour une carte déjà traitée
+   signale que la bascule a atterri au mauvais endroit.
+
+Le `--publish` **re-vérifie l'identité après écriture** : si le contenu écrit ne se
+relit pas identique à la source, l'outil sort en `2` et le dit — jamais de « publié »
+sur une écriture non relue.
+
 ## Schéma d'un workflow
 
 ```yaml
