@@ -12,6 +12,7 @@ Map of Content of the `docs/architecture/` vault. Every cadrage note
 
 ## Contextes d'issue (cadrage)
 
+- [[issue-1]] — Verify the complete pipeline cycle (framework test issue).
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 
 ## Components
