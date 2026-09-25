@@ -43,7 +43,7 @@ n'intervient que là où il faut juger. Un pipeline au repos coûte zéro token.
 | `workflows/` | schémas et templates de workflow YAML |
 | `plugins/` | plugins de l'app desktop (boutons Discord, UI dashboard) |
 | `assets/` | ressources de rendu (mermaid embarqué) |
-| `tests/` | 113 tests, sans dépendance externe |
+| `tests/` | 138 tests, sans dépendance externe |
 
 > **Une seule copie par fichier.** Le dossier `bridge/` a existé et dupliquait 12
 > fichiers de `pipeline/` ; l'un d'eux (`pj_graphwatch.py`) avait divergé de 382
@@ -122,6 +122,12 @@ hermes kanban boards set-default-workdir pj-<repo> /chemin/vers/clone-dev
 | `pj_coverage_gate.py` | couverture par fichier **modifié** | exit 1 |
 | `pj_docs_lint.py` | vault documentaire (frontmatter, liens, orphelines) | exit 1 |
 | `pj_spawn_guard.py` | liste blanche d'assignees par board | bloque la carte |
+| `pj_readiness.py` | **Agent Readiness du repo cible** (niveaux 1–4, piliers Factory, seuil 80 %) — branché dans le pont : `PJ_READINESS_REPO=<clone> PJ_READINESS_MIN=3 gh_kanban_bridge.py pull` suspend l'import si le repo ne permet pas de valider un worker | exit 1 = niveau insuffisant |
+
+Le gate de readiness est **opt-in** (variable `PJ_READINESS_REPO`) et à dégradation
+ouverte : script absent ou en erreur → pull sans gate, jamais de cron mort.
+Inspiré du modèle Agent Readiness de Factory (droid) : un repo N0 ne permet pas
+de VALIDER le travail d'un worker — les dispatchs y sont voués à l'échec.
 
 **Règle** : un contrôle qui filtre par motif filtre en **général**, jamais par liste
 fermée — sinon toute étape ajoutée devient un faux positif, précisément au moment

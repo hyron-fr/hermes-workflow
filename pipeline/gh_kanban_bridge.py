@@ -24,6 +24,9 @@ Variables d'environnement :
   KANBAN_ASSIGNEE  profil assigné aux cartes   (défaut: default)
   DRY_RUN          1 = afficher sans exécuter les écritures
   BRIDGE_VERBOSE   1 = loguer même les ticks sans action (défaut: silencieux)
+  PJ_READINESS_REPO  clone du dépôt cible — ACTIVE le gate de readiness (opt-in)
+  PJ_READINESS_MIN   niveau Agent Readiness requis (défaut: 3)
+  PJ_READINESS_SCRIPT chemin de pj_readiness.py (défaut: à côté de ce script)
 
 Mode silencieux (défaut) : stdout ne sort que si une action a réellement
 eu lieu — conçu pour un cron `--no-agent` où stdout vide = tick muet.
@@ -35,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 GH_REPO = os.environ.get("GH_REPO", "hyron-fr/hermes-experiment")
 KANBAN_BOARD = os.environ.get("KANBAN_BOARD", "hermes-experiment")
@@ -46,6 +50,14 @@ TRIAGE_LABEL_COLOR = "d93f0b"
 BOT_GRACE_SECONDS = int(os.environ.get("BOT_GRACE_SECONDS", "600"))  # issues plus jeunes -> réservées au bot gh-triage
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 QUIET_IDLE = os.environ.get("BRIDGE_VERBOSE") != "1"
+
+# Gate de readiness du repo cible (opt-in) : si PJ_READINESS_REPO pointe vers un
+# clone du dépôt, le pull n'importe QUE si le repo atteint PJ_READINESS_MIN
+# (Agent Readiness, modèle Factory). Un dispatch sur un repo qui ne peut pas
+# valider le travail d'un worker est voué à l'échec (runs à l'aveugle).
+PJ_READINESS_REPO = os.environ.get("PJ_READINESS_REPO", "").strip()
+PJ_READINESS_MIN = os.environ.get("PJ_READINESS_MIN", "3").strip()
+PJ_READINESS_SCRIPT = os.environ.get("PJ_READINESS_SCRIPT", "").strip()
 
 def _resolve_bin(name: str, *candidates: str) -> str:
     """Résout un exécutable : PATH puis emplacements connus.
@@ -312,7 +324,63 @@ def check_no_rogue_cards() -> None:
             f"Examiner: hermes kanban --board {KANBAN_BOARD} show {t['id']}")
 
 
+def readiness_verdict() -> dict:
+    """Gate de readiness du repo cible (0 LLM, opt-in par PJ_READINESS_REPO).
+
+    Retourne {blocked, reason, level, min}. Dégradation OUVERTE : si le script
+    pj_readiness est introuvable ou échoue, on n'importe pas de blocage dur —
+    le cron pont reste utile même sans l'outil (même philosophie que le gate
+    de couverture, "pull sans gate" est logué).
+    """
+    if not PJ_READINESS_REPO:
+        return {"blocked": False, "reason": "", "level": None, "min": None}
+    script = PJ_READINESS_SCRIPT or str(
+        Path(__file__).resolve().parent / "pj_readiness.py")
+    if not os.path.isfile(script):
+        log(f"  gate readiness indisponible (script absent: {script}) — pull sans gate")
+        return {"blocked": False, "reason": "script absent", "level": None,
+                "min": PJ_READINESS_MIN}
+    try:
+        import tempfile
+        level = None
+        with tempfile.TemporaryDirectory() as td:
+            report_path = os.path.join(td, "report.json")
+            r = subprocess.run(
+                [sys.executable, script, "--repo", PJ_READINESS_REPO,
+                 "--min-level", PJ_READINESS_MIN, "--quiet", "--json", report_path],
+                capture_output=True, text=True, timeout=120)
+            # Le rapport JSON fait autorité pour le niveau (indépendant du texte).
+            try:
+                with open(report_path, encoding="utf-8") as fh:
+                    level = int(json.load(fh)["level"])
+            except Exception:
+                pass
+    except Exception as e:
+        log(f"  gate readiness en échec ({type(e).__name__}: {e}) — pull sans gate")
+        return {"blocked": False, "reason": f"erreur: {e}", "level": None,
+                "min": PJ_READINESS_MIN}
+    if r.returncode == 2:
+        log(f"  gate readiness en erreur d'exécution — pull sans gate "
+            f"({(r.stderr or r.stdout).strip()[:160]})")
+        return {"blocked": False, "reason": "erreur exécution", "level": None,
+                "min": PJ_READINESS_MIN}
+    if r.returncode != 0:
+        return {"blocked": True,
+                "reason": (f"readiness du repo cible insuffisant : requis N{PJ_READINESS_MIN}, "
+                           f"atteint N{level if level is not None else '?'} — compléter "
+                           f"les manques (linter, tests, AGENTS.md…) avant d'importer"),
+                "level": level, "min": PJ_READINESS_MIN}
+    return {"blocked": False, "reason": "ok", "level": level, "min": PJ_READINESS_MIN}
+
+
 def pull() -> None:
+    # RENFO 2 — gate de readiness : le repo cible doit permettre de VALIDER le
+    # travail d'un worker (tests, linter, AGENTS.md…) avant d'importer une issue
+    # en graphe. Opt-in par PJ_READINESS_REPO ; dégradation ouverte sinon.
+    rv = readiness_verdict()
+    if rv["blocked"]:
+        log(f"⛔ PULL SUSPENDU — {rv['reason']}")
+        return
     issues = list_open_issues()
     # Le label 'triage' protège une issue en cours de drill par le bot
     # Discord gh-triage : elle ne doit PAS être importée en carte sans "go".
