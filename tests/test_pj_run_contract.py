@@ -176,6 +176,19 @@ def test_contract_state_work_done(rc):
     assert c["state"] == rc.WORK_DONE
 
 
+def test_contract_log_goes_to_last_violation_not_last_run(rc):
+    """Le log décrit le dernier run EXÉCUTÉ — qui peut être un run réussi
+    après les violations. L'attribuer au dernier run (non-violation) laisserait
+    toutes les violations sans preuve : c'est le bug constaté sur projecta.
+    """
+    runs = [_viol(1), _viol(2), _viol(3), _viol(4),
+            {"id": 5, "outcome": "completed", "metadata": {"pr": {"number": 3}}}]
+    c = rc.task_contract(runs, LOG_NEVER_STARTED)
+    assert c["state"] == rc.NEVER_STARTED          # le log est bien exploité
+    assert c["violations"] == 4
+    assert c["runs_satisfied"] == 1
+
+
 def test_contract_infra_dominates(rc):
     """Si le dernier run n'a pas démarré, l'infra domine — même si un
     summary antérieur décrit du travail : le vrai blocage est l'infra."""
@@ -213,6 +226,40 @@ def test_main_requires_target(rc, monkeypatch):
     monkeypatch.setattr("sys.argv", ["pj_run_contract.py", "--board", "x"])
     with pytest.raises(SystemExit):
         rc.main()
+
+
+def test_status_flag_includes_archived(rc, monkeypatch):
+    """Les cartes écartées (archived) sont auditables via --status.
+
+    Ce sont justement celles qui ont été bloquées par l'infra et mises de
+    côté sans diagnostic — l'audit doit pouvoir les rattraper.
+    """
+    seen = {}
+
+    def fake_list(board, statuses=None):
+        seen["statuses"] = statuses
+        return []
+
+    monkeypatch.setattr(rc, "list_tasks", fake_list)
+    monkeypatch.setattr("sys.argv",
+                        ["pj_run_contract.py", "--board", "x", "--all",
+                         "--status", "archived,done", "--quiet"])
+    assert rc.main() == 0
+    assert seen["statuses"] == ["archived", "done"]
+
+
+def test_default_status_is_active_scope(rc, monkeypatch):
+    seen = {}
+
+    def fake_list(board, statuses=None):
+        seen["statuses"] = statuses
+        return []
+
+    monkeypatch.setattr(rc, "list_tasks", fake_list)
+    monkeypatch.setattr("sys.argv",
+                        ["pj_run_contract.py", "--board", "x", "--all", "--quiet"])
+    assert rc.main() == 0
+    assert "archived" not in seen["statuses"]
 
 
 def test_main_boards_error(rc, monkeypatch):

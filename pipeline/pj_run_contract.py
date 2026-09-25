@@ -77,6 +77,15 @@ _PROVIDER_ERROR_MARKERS = (
     "http 429",
     "insufficient",
     "no such model",
+    # Config/provider injoignable : le worker meurt avant sa première requête
+    # (constaté en prod : « Unknown provider 'litellm-proxy-gcp' »).
+    "unknown provider",
+    "check 'hermes model'",
+    "provider not found",
+    "connection refused",
+    "could not connect",
+    "api key not set",
+    "missing api key",
 )
 
 # « Messages:       1 (1 user, 0 tool calls) »
@@ -207,11 +216,14 @@ def task_contract(runs: list[dict], log_text: str = "",
                   events: list[dict] | None = None) -> dict:
     """Contrat agrégé d'une carte : {state, runs_audited, violations, verdicts}."""
     violations = [r for r in runs if run_violated(r)]
-    # Le log worker est écrasé à chaque run : seul le DERNIER run est jugé
-    # sur le log. Les autres le sont sur metadata + summary.
-    last_id = max((r.get("id") or 0) for r in runs) if runs else None
+    # Le log worker est écrasé à chaque run : il décrit le DERNIER run exécuté.
+    # Les runs terminaux (réussis après une violation) n'ont pas à consommer
+    # cette preuve — on l'attribue au dernier run EN VIOLATION, sinon les
+    # violations antérieures seraient jugées sans preuve.
+    last_violation_id = (max((r.get("id") or 0) for r in violations)
+                         if violations else None)
     verdicts = [classify_run(r, log_text, latest_summary,
-                             is_latest=(r.get("id") == last_id))
+                             is_latest=(r.get("id") == last_violation_id))
                 for r in violations]
     kinds = [v["verdict"] for v in verdicts]
 
@@ -330,6 +342,9 @@ def main() -> int:
     ap.add_argument("--task")
     ap.add_argument("--all", action="store_true",
                     help="audite les cartes actives du board")
+    ap.add_argument("--status", default="",
+                    help="statuts à auditer (défaut actifs ; "
+                         "ex. 'archived' pour les cartes écartées)")
     ap.add_argument("--json", dest="json_path", default="")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
@@ -337,11 +352,12 @@ def main() -> int:
     if not a.task and not a.all:
         ap.error("--task ou --all requis")
 
+    statuses = [s.strip() for s in a.status.split(",") if s.strip()] or _ACTIVE
     try:
         if a.task:
             targets = [a.task]
         else:
-            targets = [t.get("id") for t in list_tasks(a.board, _ACTIVE)
+            targets = [t.get("id") for t in list_tasks(a.board, statuses)
                        if t.get("id")]
     except Exception as e:
         print(f"[pj-contract] ERREUR: {e}")
