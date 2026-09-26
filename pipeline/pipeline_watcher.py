@@ -32,7 +32,7 @@ import subprocess
 import sys
 
 KANBAN_BOARD = os.environ.get("KANBAN_BOARD", "hermes-experiment")
-PIPELINE_REPO = os.environ.get("PIPELINE_REPO", "${HOME}/hermes-experiment")
+PIPELINE_REPO = os.environ.get("PIPELINE_REPO") or os.path.expandvars("${HOME}/hermes-experiment")
 DRY_RUN = os.environ.get("DRY_RUN") == "1"
 QUIET_IDLE = os.environ.get("WATCHER_VERBOSE") != "1"
 

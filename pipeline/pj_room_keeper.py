@@ -29,12 +29,9 @@ import re
 import subprocess
 import sys
 
-# Racine du dépôt : résolue depuis ce fichier (aucun chemin absolu).
-WORKFLOW_ROOT = Path(__file__).resolve().parents[1]
-
 BOARD = os.environ.get("PJ_BOARD", "")
 HERMES_BIN = os.environ.get("PJ_HERMES_BIN") or os.path.expanduser("~/.local/bin/hermes")
-ROOM_PY = os.environ.get("PJ_ROOM_PY") or str(WORKFLOW_ROOT / "pipeline" / "pj_room.py")
+ROOM_PY = os.environ.get("PJ_ROOM_PY") or str(Path.home() / ".hermes" / "scripts" / "pj_room.py")
 ROOM_MARKER = "ROOM:"
 REPORT_MARKER = "[room-report]"
 LIVELOCK_MARKER = "[room-livelock]"

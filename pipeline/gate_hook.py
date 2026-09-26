@@ -37,7 +37,7 @@ from pathlib import Path
 
 HERMES_BIN = shutil.which("hermes") or os.path.expanduser(
     "~/.hermes/hermes-agent/venv/bin/hermes")
-PIPELINE_REPO = os.environ.get("PIPELINE_REPO", "${HOME}/hermes-experiment")
+PIPELINE_REPO = os.environ.get("PIPELINE_REPO") or os.path.expandvars("${HOME}/hermes-experiment")
 DEFAULT_BOARD = os.environ.get("KANBAN_BOARD", "hermes-experiment")
 GATE_COMMENT_PREFIX = "[gate] "
 

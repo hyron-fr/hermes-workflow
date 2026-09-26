@@ -62,11 +62,13 @@ def save_state(state: dict) -> None:
 
 def retain(payload: dict) -> bool:
     url = f"{HINDSIGHT_URL}/v1/default/banks/{BANK}/memories"
-    data = json.dumps(payload).encode()
+    # Hindsight API (RetainRequest) exige un tableau `items` au niveau racine,
+    # pas un objet mémoire nu.
+    data = json.dumps({"items": [payload]}).encode()
     req = urllib.request.Request(url, data=data, method="POST",
                                  headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=600) as r:
             return 200 <= r.status < 300
     except Exception as e:
         print(f"[pj-docmem] échec retain: {e}")

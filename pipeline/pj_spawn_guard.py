@@ -5,7 +5,7 @@ Contexte (vérifié dans la source Hermes)
 ----------------------------------------
 `hermes_cli/kanban_decompose._resolve_profile_from_cfg` retombe sur
 `get_active_profile_name()` quand `kanban.default_assignee` / `orchestrator_profile`
-sont vides : c'est le profil qui EXÉCUTE le dispatcher (ex. `example-local`) qui
+sont vides : c'est le profil qui EXÉCUTE le dispatcher (ex. `default`) qui
 devient l'assignee des cartes. D'où des cartes créées/spawnées hors pipeline sur
 les boards pj. La config seule ne suffit pas (elle se re-perd : autre gateway,
 config recréée). Ce script est la barrière qui refuse le travail hors pipeline.
@@ -23,12 +23,12 @@ Règles
 ------
   boards concernés   : slug commençant par `pj` (ou PJ_BOARDS, séparés par virgule)
   assignees admis    : `pj-master`, `pj-dev`, `pj-doc`, `pj-test` (ou PJ_ALLOWED_ASSIGNEES)
-  hors pipeline      : toute autre assignee (example-local, default, vide, ...)
+  hors pipeline      : toute autre assignee (default, vide, ...)
 Statuts examinés : triage, todo, ready, running, scheduled, blocked, review.
 
 Usage (hooks, stdin JSON) : kanban_task_claimed | on_kanban_dispatch_tick
 Test manuel :
-  echo '{"extra":{"task_id":"t_x","board":"pj-dino-game","assignee":"example-local"}}' | python3 pj_spawn_guard.py
+  echo '{"extra":{"task_id":"t_x","board":"pj-dino-game","assignee":"default"}}' | python3 pj_spawn_guard.py
   echo '{"board":"pj-dino-game"}' | python3 pj_spawn_guard.py
 """
 

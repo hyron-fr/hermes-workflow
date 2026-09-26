@@ -30,7 +30,7 @@ import re
 import sys
 from pathlib import Path
 
-HERMES_AGENT = os.environ.get("PJ_HERMES_AGENT", "${HOME}/.hermes/hermes-agent")
+HERMES_AGENT = os.environ.get("PJ_HERMES_AGENT") or str(Path.home() / ".hermes" / "hermes-agent")
 DEFAULT_MEMBERS = ("pj-master", "pj-dev", "pj-doc", "pj-test")
 VALID_ACTIONS = ("ensure", "disband", "state", "ask", "status", "transcript", "stop")
 
