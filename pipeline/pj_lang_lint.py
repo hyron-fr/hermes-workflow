@@ -20,7 +20,23 @@ Contract (frozen by `tests/test_lang_lint.py`, card t_ea1ae788):
 - `rc 0` = compliant, and the output is SILENT (stdout and stderr both empty);
   `rc 1` = at least one violation, each line naming path + line + the faulty text;
   `rc 2` = usage error (missing path, missing/unreadable exclusions file, unknown
-  flag) — never confused with a violation, and vice versa.
+  flag, stale `hors_corpus` declaration) — never confused with a violation, and
+  vice versa.
+
+`hors_corpus` — WHOLE-FILE exemptions (card t_54a5f661, human option 1 of 2026-09-26):
+
+- a `hors_corpus:` section in the exclusions file lists, by relative path, the files
+  that are OUT OF THE SCAN CORPUS by declaration (each entry names `fichier` and a
+  `pourquoi`, so every exemption stays re-readable). It is a FILE-level exemption,
+  distinct from the SPAN-level frozen literals above;
+- when a declared file is part of what the scan covers (whole-tree run, or an
+  explicit argument that reaches it), it is SKIPPED and, on an EXPLICIT request,
+  NAMED on stdout (traceability: an explicit request is never met with silence);
+- a whole-tree run stays SILENT on rc 0 — the declarations are read from the file,
+  not announced;
+- a declaration whose file is still tracked but missing from the work tree is a
+  usage error (`rc 2`), naming the file: an exemption must never pass unnoticed.
+  A path this corpus never carried (fixture trees mirroring the layout) is inert.
 
 Granularity is the SPAN, never the whole line: the spans matching the frozen
 literals are REMOVED from the line, and the line is reported only if a diacritic
@@ -161,6 +177,47 @@ def resolve_exclusions(given, root: Path, cwd: Path):
     return None, ("no exclusions file found (looked for %s)" % DEFAULT_EXCLUSIONS)
 
 
+def load_excluded_files(path: Path):
+    """Whole-file exemptions declared under `hors_corpus:` — or a message.
+
+    Each entry is a mapping with `fichier` (repo-relative path) and `pourquoi` (the
+    declaration, kept re-readable). Returns `([(rel, pourquoi), ...], None)` or
+    `(None, message)`; a declaration without a `fichier` is a usage error — the
+    exemption exists to be re-read, and one that names no file names nothing.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return None, "unreadable exclusions file %s (%s)" % (path, exc.strerror or exc)
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - PyYAML ships with this environment
+        return None, "PyYAML is required to read %s" % path
+    try:
+        doc = yaml.safe_load(raw)
+    except Exception as exc:
+        return None, "unreadable exclusions file %s (%s: %s)" % (
+            path, type(exc).__name__, str(exc).splitlines()[0][:120])
+    if not isinstance(doc, dict) or "hors_corpus" not in doc:
+        return [], None  # no section: nothing declared, nothing to validate
+    entries = doc["hors_corpus"]
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, (list, tuple)):
+        return None, ("%s: `hors_corpus:` must be a list of "
+                      "{fichier, pourquoi} entries" % path)
+    out = []
+    for i, ent in enumerate(entries):
+        if not isinstance(ent, dict) or not str(ent.get("fichier", "")).strip():
+            return None, ("%s: `hors_corpus:` entry %d has no `fichier` "
+                          "(exemptions must stay re-readable)" % (path, i))
+        rel = str(ent["fichier"]).strip().lstrip("./").replace("\\", "/")
+        out.append((rel, str(ent.get("pourquoi", "")).strip()))
+    if not out:
+        return [], None
+    return out, None
+
+
 # ------------------------------------------------------------------------- scan
 
 
@@ -220,6 +277,9 @@ def main() -> int:
     literals, problem = load_literals(exclusions)
     if problem or literals is None:
         return usage(problem or "no frozen literal loaded")
+    excluded, problem = load_excluded_files(exclusions)
+    if problem or excluded is None:
+        return usage(problem or "no hors_corpus entry loaded")
 
     cibles = []
     for arg in a.chemins:
@@ -245,9 +305,34 @@ def main() -> int:
         except RuntimeError as exc:
             return usage("cannot enumerate the corpus: %s" % exc)
 
+    # `hors_corpus` declarations are checked against the corpus they would apply to:
+    # a file that is TRACKED but missing from the work tree is a STALE declaration —
+    # the exemption would protect a file that is not there, and an exemption must not
+    # pass unnoticed (rc 2, naming the file). A declaration that names a path this
+    # corpus never carried (a fixture tree mirroring the layout) is inert: it simply
+    # has nothing to exempt here.
+    if excluded:
+        try:
+            index = tracked_md(root)
+        except RuntimeError:
+            index = list(cibles)
+        manquants = [rel for rel, _ in excluded
+                     if rel in set(index) and not (root / rel).is_file()]
+        if manquants:
+            return usage(
+                "stale hors_corpus declaration: %s is declared as out of corpus in "
+                "%s but is missing from the work tree"
+                % (", ".join(sorted(manquants)), exclusions.name))
+
+    exclus = dict(excluded)
     violations = 0
     fichiers = 0
     for rel in dict.fromkeys(cibles):
+        if rel in exclus:
+            if a.chemins:  # explicit request: never met with silence
+                print("[pj-lang-lint] %s — hors corpus (exempted by %s: %s)"
+                      % (rel, exclusions.name, exclus[rel] or "voir declaration"))
+            continue
         hits = scan_file(root / rel, literals)
         if not hits:
             continue
