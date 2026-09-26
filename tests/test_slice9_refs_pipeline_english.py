@@ -564,7 +564,11 @@ def test_nominal_le_scan_sans_argument_ne_nomme_plus_la_slice_dans_tout_le_corpu
         "the whole-tree scan still NAMES files of this slice: %r\n%s"
         % (fautifs, out_of(p)))
 
-    voisin, homonyme = "docs/architecture/README.md", "pipeline/README.md"
+    # L'homonyme doit être un chemin HORS `hors_corpus` : `docs/architecture/README.md` est
+    # exempté depuis `99d8475` (le scan ne le nomme plus — c'est l'exemption qui est
+    # correcte, pas un défaut du sujet). Le décor porte donc son voisin sur un AUTRE
+    # `README.md` non exempté, même basename et chemin relatif distinct.
+    voisin, homonyme = "docs/functional/README.md", "pipeline/README.md"
     fichiers = {rel: ENGLISH_STUB for rel in SLICE}
     fichiers[voisin] = git_show(homonyme)        # octets français, nom identique
     root = build_tree(tmp_path / "homonyme", fichiers)
@@ -886,7 +890,7 @@ def test_erreur_le_scan_de_tout_le_corpus_nomme_aussi_le_fichier_oublie(tmp_path
     slice des lignes du voisin (et le lui reprocherait à elle).
     """
     precondition_translated()
-    voisin = "docs/architecture/README.md"
+    voisin = "docs/functional/README.md"   # hors `hors_corpus` (cf. le cas nominal ci-dessus)
     for oublie in (SLICE[1], SLICE[3]):
         fichiers = {rel: ENGLISH_STUB for rel in SLICE}
         fichiers[oublie] = git_show(oublie)
