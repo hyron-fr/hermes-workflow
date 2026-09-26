@@ -21,19 +21,31 @@ Le banc ne fait confiance à AUCUN des deux fichiers : il recalcule les totaux d
 l'arbre avec sa propre définition de « ligne accentuée », puis confronte arbre ↔ registre
 ↔ prose de la planche.
 
-DATATION (arbitrage `t_ca894fd4`, décision 3) : le registre de la planche est un artefact
-DATÉ — il décrit l'arbre À UNE RÉVISION donnée. Jugé contre un arbre vivant, il produit un
-écart qui n'impute rien à personne : c'est un conflit d'échéance, pas un défaut. Ce banc
-date donc son propre jugement sous une clé d'arrimage GELÉE (`ANCRAGE_REVISION`) :
+SCEAU (arbitrage `t_18b1189a`, décisions D1+D2, 20/09) : la planche et son registre
+`plate-ledger` sont un instantané daté de l'état « avant traduction », ratifié par
+l'humain au gate (`t_e9b8c2cf`, GO du 20/09, qui a explicitement accepté « le bloc
+machine non-prose »). Le registre N'EST JAMAIS MIS À JOUR par les slices de traduction :
+ce qui change, c'est le banc — il juge le SCEAU, pas l'arbre vivant. Le sceau est le
+commit GELÉ `SEAU_REVISION`, le dernier commit qui a touché la planche ou son script :
 
-- arbre À la clé      -> verdict DÉTERMINÉ : registre, prose et arbre sont confrontés ;
-- arbre HORS de la clé -> verdict INDÉTERMINÉ, qui NOMME la révision d'arrimage : le banc
-  ne prononce alors ni échec ni vert (`pytest.skip` nommé, jamais une assertion affaiblie) ;
-- clé irrésolue       -> `AncrageIrresolu`, nommant la clé : un banc qui ne peut pas dater
-  doit le DIRE, pas improviser.
+- arbre À la constante du sceau -> le working tree EST le sceau : la confrontation est
+  directe, et toute mutation du sceau rougit le banc en nommant le champ ou le fichier ;
+- arbre EN AVANCE du sceau (traductions déjà versées) -> le sceau est mesuré FIGÉ, dans
+  son clone (à la constante), et l'avance est datée : les commits qui la portent sont
+  nommés, et le working tree doit porter le sceau INTACT (planche et script à l'identique
+  du commit) — le sceau n'est pas mis à jour (D2), il ne doit pas être trahi non plus ;
+- constante introuvable -> `AncrageIrresolu`, nommant le commit attendu : un banc qui ne
+  peut pas dater doit le DIRE — jamais un skip, jamais un vert par vacuité.
 
-Corollaire : « l'arbre n'est pas encore bilingue » est un état PROVISOIRE, jamais un
-contrat. Le cas qui l'affirmait est INVERSÉ (voir son docstring), pas supprimé.
+La datation initiale (`t_ca894fd4`, décision 3, clé `6d787c5`) est la PROVENANCE du
+sceau, mesurée : le corps du corpus est identique aux deux révisions (20 fichiers /
+3 052 lignes / 1 559 accentuées) — le sceau est l'instantané que le registre décrit.
+Hors du sceau le banc ne saute plus : le skip de la datation initiale est remplacé par
+une preuve mesurée (le sceau intact dans le dépôt + l'avance nommée), parce que le
+contrat est un VERT sur un arbre partiellement traduit — pas une abstention.
+
+Corollaire inchangé : « l'arbre n'est pas encore bilingue » est un état PROVISOIRE,
+jamais un contrat. Le cas qui l'affirmait est INVERSÉ (voir son docstring), pas supprimé.
 """
 import hashlib
 import html
@@ -109,22 +121,26 @@ SLICE2 = {"slug": "i18n-lint-bilingue", "files": 4}
 # `pipeline/pj_card_lint.py` refuse encore une carte anglaise (mesuré).
 CORRECTEUR_LINTER = "i18n-lint-bilingue"
 
-# Clé d'arrimage GELÉE (arbitrage `t_ca894fd4`, décision 3) : la révision À LAQUELLE
-# l'artefact daté (le registre de la planche) décrit l'arbre.
+# Le SCEAU (arbitrage `t_18b1189a`, décisions D1+D2) : le commit qui porte la planche et
+# son script de mesure — l'instantané ratifié que le registre décrit. C'est LUI que ce
+# banc mesure, jamais l'arbre vivant : le registre n'est jamais mis à jour (D2).
 #
-# Écrit en clair parce qu'une clé courte reste résoluble et se vérifie à l'œil : elle est
-# ici le SUJET du banc (les 4 scénarios la nomment), pas un détail d'implémentation.
-# Elle n'est PAS dérivée du registre : le banc se validerait par lui-même.
+# Dernier commit qui a touché `issue-2-plate.html` ou `issue-2-plate.measure.py`
+# (`git log -1 --format=%H -- <les deux chemins>` répond e4da869d8e…), et seul commit
+# depuis la ratification initiale `6d787c5` (décision 3 de `t_ca894fd4`) à les avoir
+# touchés.
 #
-# Vérifié à l'écriture de ce banc :
-#   git rev-parse HEAD:docs/architecture/context/issue-2-plate.measure.py
-#   git rev-parse <clé>:docs/architecture/context/issue-2-plate.measure.py
-#     -> 96560ad4f39da7c2d08fd03bb1586e116ecbe005 pour les DEUX ;
-#   git rev-parse HEAD:pipeline/pj_card_lint.py = <clé>:… = 1147290a61ec…
-#   git rev-parse HEAD:docs/…/issue-2-plate.html = 430d0375 (la clé est ANTÉRIEURE à
-#     e4da869, qui corrige la planche sur la règle bilingue du 20/09).
-#   Mesure : 20 fichiers / 3 052 lignes / 1 559 lignes accentuées — concordance rc=0.
-ANCRAGE_REVISION = "6d787c5"
+# Écrit en SHA court parce qu'il reste résoluble et se vérifie à l'œil : il est ici le
+# SUJET du banc (les scénarios le nomment), pas un détail d'implémentation. Il n'est PAS
+# dérivé du registre : le banc se validerait par lui-même.
+#
+# Vérifié à l'écriture de ce banc (mesures sur clones jetables du worktree partagé, 26/09) :
+#   git rev-parse --verify e4da869d8e^{commit} -> e4da869d8eb8ba4a8de1b2e160a29d7f184fd898
+#   le sceau porte les blobs du working tree : planche 430d0375…, script 96560ad4… ;
+#   le corps du corpus du sceau : 20 fichiers / 3 052 lignes / 1 559 lignes accentuées —
+#   identique, mesuré, à la ratification initiale 6d787c5 : la correction e4da869 a
+#   déplacé la planche (règle bilingue du 20/09), pas le corpus.
+SEAU_REVISION = "e4da869d8e"
 
 # Découpage déclaré par la spec (`specs/2/slices.json`) : GELÉ ici, jamais dérivé du
 # registre de la planche — sinon le banc validerait le registre par lui-même.
@@ -302,23 +318,38 @@ def plate_totals(txt):
 
 @pytest.fixture(scope="module")
 def clone_base(tmp_path_factory):
-    """Clone jetable au commit qui porte la planche (preuve hors de l'arbre en écriture)."""
+    """Clone jetable ARRÊTÉ SUR LE SCEAU (`SEAU_REVISION`) — la référence mesurée.
+
+    Le sceau est figé PAR LA CONSTANTE, jamais dérivé de l'arbre vivant : ce banc juge le
+    commit du registre, pas l'arbre en cours de traduction. `git log -1 -- <planche>`
+    reste EXERÇÉ ici en témoin (preuve de fraîcheur) : s'il répond autre chose que la
+    constante, le sceau a été retouché — le banc le dit, sans pour autant s'y pointer.
+    """
     if not PLATE.exists():
         pytest.fail("planche absente : %s" % PLATE)
     if not MEASURE.exists():
         pytest.fail("script de mesure absent : %s" % MEASURE)
 
-    commit = git(REPO, "log", "-1", "--format=%H", "--", PLATE_REL).strip()
-    assert commit, (
+    cle, sha = ancrage_du_registre(REPO)
+    dernier = git(REPO, "log", "-1", "--format=%H",
+                  "--", PLATE_REL, MEASURE_REL).strip()
+    assert dernier, (
         "la planche n'est pas VERSIONNÉE : la reproductibilité ne se prouve que sur un "
         "clone, donc `docs/architecture/context/issue-2-plate.html` doit être committée"
     )
-    d = tmp_path_factory.mktemp("plate") / "clone"
+    if dernier != sha:
+        print("witness TEMOIN : le dernier commit qui a touché la planche ou son script "
+              "est %s — la constante du sceau porte %s : le sceau a été retouché après "
+              "la ratification, la constante SEAU_REVISION doit être réexaminée"
+              % (dernier[:10], cle))
+    d = tmp_path_factory.mktemp("seal") / "clone"
     p = _run(["git", "clone", "--no-hardlinks", "--quiet", str(REPO), str(d)])
     assert p.returncode == 0, "clone impossible : %s" % p.stderr
-    p = _run(["git", "-C", str(d), "checkout", "--detach", commit])
-    assert p.returncode == 0, "checkout %s impossible : %s" % (commit, p.stderr)
-    return {"dir": d, "commit": commit, "plate": d / PLATE_REL,
+    p = _run(["git", "-C", str(d), "checkout", "--detach", sha, "--quiet"])
+    assert p.returncode == 0, "checkout du sceau %s impossible : %s" % (cle, p.stderr)
+    print("witness clone du sceau : %s -> %s (témoin git log -1 : %s)"
+          % (cle, sha[:10], dernier[:10]))
+    return {"dir": d, "commit": sha, "seal": cle, "plate": d / PLATE_REL,
             "script": d / MEASURE_REL}
 
 
@@ -376,18 +407,20 @@ def _rev(checkout, revision="HEAD"):
 
 
 def ancrage_du_registre(checkout=REPO, revision=None):
-    """(clé, SHA de la clé) — vérifie que la clé GELÉE résout, sinon `AncrageIrresolu`.
+    """(constante du sceau, SHA complet) — vérifie que le SCEAU résout, sinon `AncrageIrresolu`.
 
-    Le message NOMME la clé : c'est tout l'intérêt du cas d'erreur. Une clé irrésolue
-    doit faire échouer le banc bruyamment, jamais le faire passer.
+    Le message NOMME le commit attendu : c'est tout l'intérêt du cas d'erreur. Une
+    constante irrésolue doit faire échouer le banc bruyamment, jamais le faire passer
+    (ni le faire sauter : un skip serait un vert par vacuité).
     """
-    cle = ANCRAGE_REVISION if revision is None else revision
+    cle = SEAU_REVISION if revision is None else revision
     sha = _rev(checkout, cle)
     if sha is None:
         raise AncrageIrresolu(
-            "clé d'arrimage %r irrésolue dans %s : `git rev-parse --verify --quiet "
-            "%s^{commit}` a échoué. Le banc ne peut pas dater son jugement — corriger la "
-            "clé ou constater que l'historique a été réécrit."
+            "sceau d'arrimage %r irrésolu dans %s : `git rev-parse --verify --quiet "
+            "%s^{commit}` a échoué. Le banc ne peut pas dater son jugement sur le "
+            "commit du registre — corriger la constante SEAU_REVISION ou constater "
+            "que l'historique a été réécrit."
             % (cle, checkout, cle)
         )
     return cle, sha
@@ -400,7 +433,7 @@ def _revision_courante(checkout=REPO):
 
 
 def hors_ancrage(checkout=REPO):
-    """True si l'arbre n'est pas à la clé d'arrimage — donc si le jugement est daté hors."""
+    """True si l'arbre n'est pas à la constante du sceau — donc s'il est en avance sur lui."""
     _, sha = ancrage_du_registre(checkout)
     courant = _revision_courante(checkout)
     if courant is None:
@@ -409,110 +442,135 @@ def hors_ancrage(checkout=REPO):
     return courant != sha
 
 
-@pytest.fixture
-def ancrage():
-    """Datation du jugement, mesurée — jamais supposée.
+def _avance(commits, checkout=REPO):
+    """Les commits entre la constante du sceau et le HEAD de `checkout` (datation de l'avance)."""
+    p = _run(["git", "-C", str(checkout), "rev-list", "--reverse",
+              "%s..HEAD" % commits])
+    if p.returncode != 0:
+        return None
+    return [l for l in p.stdout.splitlines() if l.strip()]
 
-    Rend un dict :
-      cle       clé d'arrimage déclarée par le banc (nommée dans les messages) ;
-      sha       SHA que la clé résout ;
-      courant   HEAD vivant du checkout du banc ;
-      a_l_ancrage  courant == sha ;
-      raison    message d'INDÉTERMINÉ nommant la clé ET la révision courante ;
-      determiner(action, checkout)  DÉTERMINE une mesure : l'exécute sur un arbre daté,
-                                    et sort en `skip` nommé sur un arbre vivant.
 
-    Le `skip` est le point du contrat : hors de la clé, le banc ne prononce NI échec NI
-    vert. Il le dit, en nommant la révision d'arrimage.
+def choix_cible(clone_dir_seau=None, checkout=REPO):
+    """La CIBLE du banc (arbre + planche + script), choisie MESURÉE, jamais supposée.
 
-    `checkout` est le paramètre qui rend le contrat exerçable : la datation porte sur
-    l'arbre QUE L'ON MESURE, pas sur l'arbre où le banc est installé. C'est aussi ce qui
-    évite l'anti-patron que tout ce banc combat : mesurer un état puis le juger sans dire
-    de quand il date.
+    Arbitrage `t_18b1189a` (D1+D2) : le banc juge le SCEAU, pas l'arbre vivant.
+
+    - checkout À la constante (HEAD == sceau) : le disque EST le sceau — la planche
+      est lue sur le disque (une mutation du sceau rougit le banc, champ nommé) et
+      l'arbre est mesuré in situ ;
+    - checkout EN AVANCE du sceau (traductions déjà versées) : le sceau est mesuré
+      FIGÉ dans le clone passé en argument (`clone_dir_seau`, déjà arrêté à la
+      constante), et l'avance est datée : les commits qui la portent sont nommés. Le
+      sceau n'est pas mis à jour (D2) — il est jugé tel que ratifié, et l'avance ne
+      doit pas l'écarter silencieusement.
+
+    `checkout` est le paramètre qui rend le contrat EXERÇABLE : la datation porte sur
+    l'arbre qu'on juge (le banc, ou un arbre de sonde), jamais sur une supposition.
+    Une constante introuvable ne produit ni skip ni vert : `AncrageIrresolu`, nommant
+    le commit attendu.
     """
-    cle, sha = ancrage_du_registre(REPO)
-    courant = _revision_courante(REPO)
-    a_l_ancrage = courant == sha
-
-    def message(courant_mesure):
-        return ("INDÉTERMINÉ : le registre de la planche est daté à la clé d'arrimage %r "
-                "(sha %s) ; l'arbre mesuré est à %s (sha %s). Hors de sa clé, ce banc ne "
-                "prononce ni échec ni vert — c'est un conflit d'échéance, pas un défaut."
-                % (cle, sha[:10], (courant_mesure or "?")[:10], courant_mesure or "?"))
-
-    def determiner(action, checkout=REPO):
-        rev = _revision_courante(checkout)
-        if rev is None:
-            raise AncrageIrresolu(
-                "HEAD irrésolu dans %s : impossible de dater le jugement" % checkout)
-        if rev != sha:
-            pytest.skip(message(rev))
-        return action()
-
-    print("witness datation : clé=%s sha=%s · arbre du banc=%s · à l'ancrage=%s"
-          % (cle, sha[:10], (courant or "?")[:10], a_l_ancrage))
-    return {"cle": cle, "sha": sha, "courant": courant, "a_l_ancrage": a_l_ancrage,
-            "raison": message(courant), "message": message, "determiner": determiner}
+    cle, sha = ancrage_du_registre(checkout)
+    courant = _revision_courante(checkout)
+    if courant is None:
+        raise AncrageIrresolu(
+            "HEAD irrésolu dans %s : impossible de dater le jugement" % checkout)
+    if courant == sha:
+        return {
+            "seal": cle, "sha": sha, "courant": courant, "a_la_seau": True, "avance": [],
+            "dir": Path(checkout), "plate": Path(checkout) / PLATE_REL,
+            "script": Path(checkout) / MEASURE_REL,
+            "mode": "in-situ (le checkout mesuré EST le sceau)",
+            "message": "le registre de la planche est daté au sceau %r (sha %s) ; le "
+                       "checkout mesuré EST le sceau : le jugement porte sur lui, in situ."
+                       % (cle, sha[:10]),
+        }
+    avance = _avance(sha, checkout)
+    if avance is None:
+        raise AncrageIrresolu(
+            "le sceau %r ne résout plus dans %s : impossible de dater l'avance — le banc "
+            "échoue plutôt que de juger sans révision." % (cle, checkout))
+    clone = clone_dir_seau
+    assert clone is not None, (
+        "le checkout mesuré est en avance du sceau %r : la cible figée doit être le clone "
+        "arrêté à la constante (fixture `clone_base`)" % cle)
+    return {
+        "seal": cle, "sha": sha, "courant": courant, "a_la_seau": False,
+        "avance": avance,
+        "dir": clone, "plate": clone / PLATE_REL, "script": clone / MEASURE_REL,
+        "mode": "figée (clone à la constante, l'avance du sceau est datée)",
+        "message": "le registre de la planche est daté au sceau %r (sha %s) ; le "
+                   "checkout mesuré est à %s, en avance de %d commit(s) — le sceau est "
+                   "jugé FIGÉ, jamais l'avance."
+                   % (cle, sha[:10], courant[:10], len(avance)),
+    }
 
 
 @pytest.fixture
-def clone_ancrage(clone_base, tmp_path):
-    """Clone ramené À la clé d'arrimage : le seul arbre sur lequel le verdict est DÉTERMINÉ.
+def ancrage(clone_base):
+    """Datation du jugement par le SCEAU, mesurée — jamais supposée (voir `choix_cible`).
 
-    Le clone est un objet à nous : on peut le déplacer dans le temps sans toucher l'arbre
-    partagé en cours d'écriture (même protocole que `clone`, un cran plus loin).
+    Rend le dict cible du sceau (constante, SHA, avance nommée, planche/script à juger,
+    `message` de datation lisible). Le banc ne saute plus : le sceau se juge sur le
+    disque quand le disque est le sceau, et sur le clone figé quand l'arbre est en
+    avance — le contrat est un VERT sur un arbre partiellement traduit, pas une
+    abstention.
     """
-    cle, sha = ancrage_du_registre(clone_base["dir"])
-    d = tmp_path / "clone_ancrage"
-    shutil.copytree(clone_base["dir"], d)
-    p = _run(["git", "-C", str(d), "checkout", "--detach", sha, "--quiet"])
-    assert p.returncode == 0, (
-        "clone à la clé %r (%s) impossible : %s" % (cle, sha, p.stderr))
-    plate = d / PLATE_REL
-    ledger_of(plate)
-    print("witness clone ancré : %s -> %s" % (cle, sha[:10]))
-    return {"dir": d, "cle": cle, "sha": sha, "plate": plate, "script": d / MEASURE_REL}
+    cible = choix_cible(clone_base["dir"])
+    print("witness datation : sceau=%s sha=%s · arbre du banc=%s · à la constante=%s · "
+          "avance=%d commit(s) · %s"
+          % (cible["seal"], cible["sha"][:10], (cible["courant"] or "?")[:10],
+             cible["a_la_seau"], len(cible["avance"]), cible["mode"]))
+    return cible
 
 
 # --------------------------------------------------------------------------- tests
+#
+# Les quatre cas de MESURE ci-dessous (totaux / registre / par-slice / --json) jugent la
+# CIBLE du sceau rendue par `ancrage` : in situ quand le working tree EST le sceau,
+# sinon sur le clone FIGÉ à la constante. Le sceau muté rougit le banc (champ nommé) ;
+# l'arbre en avance reste vert avec l'avance datée.
 
 
-def test_nominal_la_mesure_regenere_les_totaux_de_la_planche(ancrage, clone_ancrage):
-    """Scénario nominal : à la clé d'arrimage, exit 0 et les totaux sont ceux de la planche.
+def test_nominal_la_mesure_regenere_les_totaux_de_la_planche(ancrage):
+    """Scénario nominal : le sceau mesuré par son propre script sort exit 0 et les totaux
+    sont ceux de la planche (20 fichiers / 3 052 lignes / 1 559 accentuées).
 
-    Le contrat porte sur une REVISION, pas sur « HEAD » : la mesure est faite sur le clone
-    ramené à la clé d'arrimage du banc, et hors de cette clé le jugement est daté
-    INDÉTERMINÉ (`ancrage.determiner`) — jamais imputé à un vivant qui n'y peut rien.
+    Le contrat porte sur le COMMIT du registre, pas sur « HEAD » : la mesure est faite
+    sur la cible du sceau rendue par `ancrage` (in situ si le working tree EST le
+    sceau, sinon sur le clone figé à la constante, avance datée).
     """
     assert MEASURE.exists(), "script de mesure absent : %s" % MEASURE
-    c = clone_ancrage
+    t = ancrage
 
     def verifier():
-        p = measure(c["dir"], c["plate"], c["script"])
-        print("witness mesure à la clé %s : rc=%d\n%s" % (c["cle"], p.returncode, p.stdout))
+        p = measure(t["dir"], t["plate"], t["script"])
+        print("witness mesure du sceau %s (%s) : rc=%d\n%s"
+              % (t["seal"], t["mode"], p.returncode, p.stdout))
         assert p.returncode == 0, (
-            "à la clé d'arrimage %r, la mesure doit sortir exit 0 sur l'arbre de l'ancre\n"
-            "--- stdout ---\n%s\n--- stderr ---\n%s" % (c["cle"], p.stdout, p.stderr)
+            "sur le sceau %r, la mesure doit sortir exit 0 sur l'arbre du sceau\n"
+            "--- stdout ---\n%s\n--- stderr ---\n%s" % (t["seal"], p.stdout, p.stderr)
         )
         assert "concordance" in p.stdout, p.stdout
         assert ("%d fichiers / %d lignes / %d lignes accentuées"
                 % (CORPUS_CIBLE["files"], CORPUS_CIBLE["lines"],
                    CORPUS_CIBLE["accented_lines"])) in p.stdout, (
-            "la mesure de l'ancre doit reproduire les totaux GELÉS du corpus %r :\n%s"
+            "la mesure du sceau doit reproduire les totaux GELÉS du corpus %r :\n%s"
             % (CORPUS_CIBLE, p.stdout))
         return p
 
-    ancrage["determiner"](verifier, c["dir"])
+    verifier()
 
 
-def test_nominal_le_registre_de_la_planche_concorde_avec_l_arbre(ancrage, clone_ancrage):
-    """Le registre machine est confronté à l'arbre, fichier par fichier.
+def test_nominal_le_registre_de_la_planche_concorde_avec_l_arbre(ancrage):
+    """Le registre machine du SCEAU est confronté à l'arbre du sceau, fichier par fichier.
 
     Deux étages, et l'ordre compte : (1) les invariants GELÉS du registre (`issue`,
     `corpus`) sont jugés SANS datation — ils ne dépendent d'aucune révision ; (2) la
-    confrontation fichier par fichier est une MESURE, donc datée.
+    confrontation fichier par fichier porte sur la CIBLE du sceau rendue par `ancrage`.
     """
-    ledger = ledger_of(clone_ancrage["plate"])
+    t = ancrage
+    ledger = ledger_of(t["plate"])
     assert ledger.get("issue") == 2, (
         "le registre doit porter son identité (`issue: 2`) : %r" % ledger.get("issue")
     )
@@ -523,11 +581,11 @@ def test_nominal_le_registre_de_la_planche_concorde_avec_l_arbre(ancrage, clone_
         )
 
     def confronter():
-        arbre = tree_stats(clone_ancrage["dir"])
+        arbre = tree_stats(t["dir"])
         mesures = {rel: v for rel, v in arbre.items() if not rel.startswith("docs/")}
         assert len(mesures) == CORPUS_CIBLE["files"], (
-            "l'arbre (clé %s) porte %d .md hors vault, attendu %d : %s"
-            % (clone_ancrage["cle"], len(mesures), CORPUS_CIBLE["files"], sorted(mesures))
+            "l'arbre du sceau (%s) porte %d .md hors docs/, attendu %d : %s"
+            % (t["seal"], len(mesures), CORPUS_CIBLE["files"], sorted(mesures))
         )
         assert sum(v[0] for v in mesures.values()) == CORPUS_CIBLE["lines"]
 
@@ -548,28 +606,29 @@ def test_nominal_le_registre_de_la_planche_concorde_avec_l_arbre(ancrage, clone_
                 if entry.get("accented_lines") != acc:
                     ecarts.append("%s: lignes accentuées déclarées %r, mesurées %d"
                                   % (rel, entry.get("accented_lines"), acc))
-        print("witness registre ↔ arbre (clé %s) : %d fichier(s) déclaré(s), %d écart(s)"
-              % (clone_ancrage["cle"], len(declarees), len(ecarts)))
-        assert not ecarts, ("registre de planche en écart avec l'arbre :\n  "
+        print("witness registre ↔ arbre du sceau (%s) : %d fichier(s) déclaré(s), %d écart(s)"
+              % (t["seal"], len(declarees), len(ecarts)))
+        assert not ecarts, ("registre de planche en écart avec l'arbre du sceau :\n  "
                             + "\n  ".join(ecarts))
 
-    ancrage["determiner"](confronter, clone_ancrage["dir"])
+    confronter()
 
 
-def test_nominal_planche_registre_et_arbre_concordent_par_slice(ancrage, clone_ancrage):
-    """Clôture arbre ↔ registre ↔ prose de la planche, par slice puis corpus.
+def test_nominal_planche_registre_et_arbre_concordent_par_slice(ancrage):
+    """Clôture arbre ↔ registre ↔ prose de la planche, par slice puis corpus, sur le SCEAU.
 
-    À la clé d'arrimage, les TROIS lectures concordent : c'est le verdict DÉTERMINÉ du
-    scénario « dans la clé d'arrimage, le verdict reste DÉTERMINÉ », et son témoin est
-    le nombre de slices confrontées.
+    Les TROIS lectures portent sur la cible du sceau rendue par `ancrage` : c'est le
+    verdict du scénario « le banc est vert sur un arbre partiellement traduit », et son
+    témoin est le nombre de slices confrontées.
     """
-    ledger = ledger_of(clone_ancrage["plate"])
-    pro = plate_totals(clone_ancrage["plate"].read_text(encoding="utf-8"))
+    t = ancrage
+    ledger = ledger_of(t["plate"])
+    pro = plate_totals(t["plate"].read_text(encoding="utf-8"))
     recs = slices_of(ledger)
 
     assert pro["corpus"] == CORPUS_CIBLE, (
-        "prose de la planche (clé %s) = %r, attendu %r"
-        % (clone_ancrage["cle"], pro["corpus"], CORPUS_CIBLE)
+        "prose de la planche du sceau (%s) = %r, attendu %r"
+        % (t["seal"], pro["corpus"], CORPUS_CIBLE)
     )
     assert pro["entete"] == pro["corpus"], (
         "la planche se contredit : en-tête %r vs tableau %r"
@@ -587,8 +646,8 @@ def test_nominal_planche_registre_et_arbre_concordent_par_slice(ancrage, clone_a
                 ecarts.append("slice %d : fichiers %r, attendus %r"
                               % (k, sorted(files_of(rec)), sorted(fichier_attendu)))
                 continue
-            lignes = sum(stats(clone_ancrage["dir"], f)[0] for f in fichier_attendu)
-            acc = sum(stats(clone_ancrage["dir"], f)[1] for f in fichier_attendu)
+            lignes = sum(stats(t["dir"], f)[0] for f in fichier_attendu)
+            acc = sum(stats(t["dir"], f)[1] for f in fichier_attendu)
             if rec.get("lines") != lignes:
                 ecarts.append("slice %d : lignes registre %r, arbre %d"
                               % (k, rec.get("lines"), lignes))
@@ -605,42 +664,46 @@ def test_nominal_planche_registre_et_arbre_concordent_par_slice(ancrage, clone_a
                 if attendu_prose["accented_lines"] != acc:
                     ecarts.append("slice %d : prose planche %d accentuées, arbre %d"
                                   % (k, attendu_prose["accented_lines"], acc))
-        print("witness verdict DÉTERMINÉ (clé %s) : %d slice(s) confrontée(s), %d écart(s)"
-              % (clone_ancrage["cle"], len(SLICES), len(ecarts)))
-        assert not ecarts, ("planche, registre et arbre divergent :\n  "
+        print("witness verdict sur le sceau (%s) : %d slice(s) confrontée(s), %d écart(s)"
+              % (t["seal"], len(SLICES), len(ecarts)))
+        assert not ecarts, ("planche, registre et arbre du sceau divergent :\n  "
                             + "\n  ".join(ecarts))
 
-    ancrage["determiner"](confronter, clone_ancrage["dir"])
+    confronter()
 
 
 def test_nominal_la_planche_et_le_script_mesures_sont_ceux_du_commit(clone_base):
-    """Le sujet mesuré est bien l'artefact VERSIONNÉ, pas un état de travail local.
+    """Le working tree porte bien le SCEAU versionné (planche + script), pas un état local.
 
-    Sans ce cas, le banc pouvait être vert sur une planche réécrite dans le working tree
-    et un commit portant autre chose : deux états, deux verts, aucune convergence
-    possible. `conv-1` exige des commits sur la branche — donc les deux fichiers que le
-    banc mesure doivent être ce que la branche porte réellement.
+    Piège connu, gardé intact : ce cas compare le working tree au commit du sceau
+    (`clone_base["commit"]`), PAS à la constante de mesure. Sans lui, le banc pourrait
+    être vert sur une planche réécrite dans le working tree alors que le sceau porterait
+    autre chose : deux états, deux verts, aucune convergence. Le sceau n'est jamais mis
+    à jour (D2) — il ne doit pas être TRahi non plus : si le working tree a dérivé du
+    commit du sceau, le banc le dit en nommant le fichier et les deux hash.
     """
+    sceau = clone_base["commit"]
     ecarts = []
     for rel in (PLATE_REL, MEASURE_REL):
         local = (REPO / rel)
         contenu_commit = subprocess.run(
-            ["git", "-C", str(REPO), "show", "%s:%s" % (clone_base["commit"], rel)],
+            ["git", "-C", str(REPO), "show", "%s:%s" % (sceau, rel)],
             capture_output=True,
         )
         if contenu_commit.returncode != 0:
-            ecarts.append("%s : absent du commit %s" % (rel, clone_base["commit"][:10]))
+            ecarts.append("%s : absent du commit du sceau %s" % (rel, sceau[:10]))
             continue
         h_local = hashlib.sha256(local.read_bytes()).hexdigest()
         h_commit = hashlib.sha256(contenu_commit.stdout).hexdigest()
         if h_local != h_commit:
             ecarts.append(
-                "%s : le fichier du working tree (sha256 %s) diffère de celui du commit "
-                "%s (sha256 %s) — commit non à jour"
-                % (rel, h_local[:12], clone_base["commit"][:10], h_commit[:12])
+                "%s : le fichier du working tree (sha256 %s) diffère de celui du sceau "
+                "%s (sha256 %s) — le sceau est trahi dans le working tree"
+                % (rel, h_local[:12], sceau[:10], h_commit[:12])
             )
     assert not ecarts, (
-        "le banc mesure un état qui n'est pas celui de la branche :\n  "
+        "le working tree ne porte plus le SCEAU versionné (le registre n'est jamais "
+        "mis à jour — le sceau doit rester tel que ratifié) :\n  "
         + "\n  ".join(ecarts)
     )
 
@@ -1405,38 +1468,41 @@ def test_erreur_le_retrait_d_un_controle_est_detecte_par_le_banc(clone_tip, tmp_
 # ils ne se déclarent pas hors sujet.
 
 
-def test_nominal_la_sortie_json_porte_le_verdict_et_le_code_de_sortie_suit(ancrage, clone_ancrage):
-    """`--json` : la branche machine du contrat, avec son code de sortie, DATÉE.
+def test_nominal_la_sortie_json_porte_le_verdict_et_le_code_de_sortie_suit(ancrage):
+    """`--json` : la branche machine du contrat, sur la CIBLE du sceau.
 
     Le rapport `--json` est une MESURE : il porte donc lui aussi une révision. Sur l'arbre
-    VIVANT, `vc` bascule à `ecart` dès qu'une slice traduit un fichier du corpus — c'est un
-    conflit d'échéance. Le contrat est vérifié sur le clone ramené à la clé d'arrimage :
-    `verdict == "concordance"` ET les totaux GELÉS reproduits. La seconde moitié (verdict
-    `ecart` et rc 1, sur un clone muté) est le cas suivant.
+    VIVANT traduit, `vc` basculerait à `ecart` dès qu'une slice traduit un fichier du
+    corpus — c'est un conflit d'échéance, pas un défaut. Le contrat est vérifié sur la
+    cible du sceau rendue par `ancrage` : `verdict == "concordance"` ET les totaux GELÉS
+    reproduits. La seconde moitié (verdict `ecart` et rc 1, sur un clone muté) est le cas
+    suivant.
     """
-    c = clone_ancrage
+    t = ancrage
 
     def verifier():
-        p = _run([sys.executable, str(c["script"]), "--root", str(c["dir"]),
-                  "--plate", str(c["plate"]), "--json"])
+        p = _run([sys.executable, str(t["script"]), "--root", str(t["dir"]),
+                  "--plate", str(t["plate"]), "--json"])
         assert p.returncode == 0, (
-            "mesure --json à la clé %s : rc=%d\n%s" % (c["cle"], p.returncode, p.stderr))
+            "mesure --json du sceau %s (%s) : rc=%d\n%s"
+            % (t["seal"], t["mode"], p.returncode, p.stderr))
         rapport = json.loads(p.stdout)
         assert rapport["verdict"] == "concordance", (
-            "à la clé %s le verdict doit être une concordance : %r"
-            % (c["cle"], rapport["verdict"]))
+            "sur le sceau %s le verdict doit être une concordance : %r"
+            % (t["seal"], rapport["verdict"]))
         assert rapport["declared_md"] == CORPUS_CIBLE["files"]
         assert rapport["declared"] == CORPUS_CIBLE, (
-            "les totaux GELÉS du corpus doivent être reproduits à l'ancre : %r"
+            "les totaux GELÉS du corpus doivent être reproduits sur le sceau : %r"
             % rapport["declared"])
         assert rapport["unassigned_md"], (
             "le rapport doit lister les .md non déclarés (hors corpus) : %r"
             % rapport["unassigned_md"]
         )
-        print("witness --json concordance (clé %s) : declared=%d unassigned=%d"
-              % (c["cle"], rapport["declared_md"], len(rapport["unassigned_md"])))
+        print("witness --json concordance (sceau %s, %s) : declared=%d unassigned=%d"
+              % (t["seal"], t["mode"], rapport["declared_md"],
+                 len(rapport["unassigned_md"])))
 
-    ancrage["determiner"](verifier, c["dir"])
+    verifier()
 
 
 def test_limite_la_sortie_json_suit_l_ecart(clone):
@@ -1701,153 +1767,163 @@ def test_limite_un_arbre_qui_ne_porte_QUE_le_corpus_ne_produit_aucun_avertisseme
 def test_limite_le_verdict_sur_l_arbre_vivant_suit_la_datation(ancrage):
     """Limite — le scénario d'origine : registre DATÉ confronté à l'arbre VIVANT.
 
-    C'est le cas qui a motivé la décision 3. L'arbre de la branche porte des fichiers déjà
-    traduits (plus aucun diacritique sur les slices livrées) alors que le registre décrit
-    l'état « avant » : la confrontation est structurellement condamnée à diverger. Le
-    contrat n'est donc PAS « pas d'écart » — il est : le verdict SUIT la datation.
+    C'est le cas qui a motivé la décision 3 et que l'arbitrage `t_18b1189a` a transformé
+    en contrat de VERT. L'arbre de la branche porte des fichiers déjà traduits (plus
+    aucun diacritique sur les slices livrées) alors que le registre décrit l'état « avant
+    » : la confrontation sur l'avance est structurellement condamnée à diverger. Le
+    contrat n'est donc PAS « pas d'écart » — il est : le verdict SUIT la datation du
+    sceau, sans jamais s'abstenir.
 
-      - arbre vivant hors de la clé -> INDÉTERMINÉ, nommant la clé ET la révision mesurée,
-        et surtout PAS un échec ;
-      - arbre du banc à la clé      -> DÉTERMINÉ, et la mesure est réellement exécutée.
+      - le banc mesure la CIBLE du sceau rendue par `ancrage` (in situ ou clone figé),
+        jamais l'avance ;
+      - l'avance est NOMMÉE (les commits entre le sceau et le HEAD du banc), et le sceau
+        reste INTACT dans le working tree (planche + script à l'identique du commit) —
+        le vert d'un arbre partiellement traduit exige la preuve, pas un skip.
 
-    Le cas est un contrat, pas un constat : il tient dans les DEUX positions de l'arbre et
-    interdit un `determiner` qui skipperait toujours.
+    Le cas est un contrat, pas un constat : il tient dans les DEUX positions de l'arbre
+    (à la constante et en avance), et interdit une datation qui sauterait ou passerait
+    par vacuité.
     """
-    if hors_ancrage(REPO):
-        temoin = []
-
-        def action():
-            temoin.append("exécutée")
-            return "mesure"
-
-        with pytest.raises(pytest.skip.Exception) as exc:
-            ancrage["determiner"](action, REPO)
-        msg = str(exc.value)
-        assert "INDÉTERMINÉ" in msg and ancrage["cle"] in msg, (
-            "confronté à l'arbre VIVANT hors de sa clé, le banc doit rapporter "
-            "INDÉTERMINÉ en nommant la révision d'arrimage %r : %r" % (ancrage["cle"], msg))
-        assert (ancrage["courant"] or "?")[:10] in msg, (
-            "le verdict doit aussi nommer la révision de l'arbre mesuré %s : %r"
-            % ((ancrage["courant"] or "?")[:10], msg))
-        assert not temoin, (
-            "l'INDÉTERMINÉ ne doit pas s'accompagner d'une mesure : ce serait juger sans "
-            "dater, exactement l'anti-patron que ce banc combat")
-        print("witness arbre vivant HORS clé : verdict INDÉTERMINÉ (clé %s, mesuré %s)"
-              % (ancrage["cle"], (ancrage["courant"] or "?")[:10]))
+    t = ancrage
+    if t["a_la_seau"]:
+        assert t["avance"] == [], "à la constante, l'avance du sceau est VIDE"
+        print("witness arbre du banc À la constante du sceau %s : verdict in situ" % t["seal"])
     else:
-        def mesurer_a_l_ancrage():
-            return "DÉTERMINÉ"
+        assert t["avance"], (
+            "l'arbre du banc est en avance du sceau %r : l'avance doit être NOMMÉE "
+            "(commits entre le sceau et le HEAD) : %r" % (t["seal"], t["avance"]))
+        assert t["avance"][-1] == t["courant"], (
+            "l'avance datée doit se TERMINER au HEAD du banc %s : %r"
+            % (t["courant"][:10], [c[:10] for c in t["avance"]]))
+        assert t["sha"] not in t["avance"], (
+            "l'avance ne contient pas le sceau lui-même : %r" % t["seal"])
+        for rel in (PLATE_REL, MEASURE_REL):
+            contenu = subprocess.run(
+                ["git", "-C", str(REPO), "show", "%s:%s" % (t["sha"], rel)],
+                capture_output=True)
+            assert contenu.returncode == 0, (
+                "le sceau %r ne porte pas %s" % (t["seal"], rel))
+            assert hashlib.sha256(contenu.stdout).hexdigest() == \
+                hashlib.sha256((REPO / rel).read_bytes()).hexdigest(), (
+                "%s du working tree a dérivé du sceau %r : le registre n'est jamais mis "
+                "à jour (D2), le sceau ne doit pas être trahi non plus" % (rel, t["seal"]))
+        print("witness arbre vivant EN AVANCE du sceau %s : %d commit(s) datés, sceau "
+              "intact — verdict sur le sceau %s"
+              % (t["seal"], len(t["avance"]), t["mode"]))
 
-        assert ancrage["determiner"](mesurer_a_l_ancrage, REPO) == "DÉTERMINÉ", (
-            "l'arbre du banc EST à la clé %r : le verdict doit être DÉTERMINÉ"
-            % ancrage["cle"])
-        print("witness arbre vivant À la clé : verdict DÉTERMINÉ (clé %s)" % ancrage["cle"])
 
-
-# --------------------------------------------------- datation du jugement (décision 3)
+# --------------------------------------------------- datation du jugement du sceau
 #
-# Les 3 cas ci-dessous exercent la DATATION elle-même. Sans eux, le mécanisme
-# (clé résolue, hors-clé = INDÉTERMINÉ, dans-clé = DÉTERMINÉ) serait cru sur parole :
-# un `determiner` qui skipperait TOUJOURS éteindrait les 4 rouges sans rien prouver, et
-# c'est exactement l'anti-patron que ce banc combat. Ces cas rendent le mécanisme
-# falsifiable — donc ils ne sont pas tautologiques.
+# Les 2 cas ci-dessous exercent la DATATION elle-même sur des arbres MESURÉS (jamais sur
+# le banc : le banc EST son environnement, on ne le juge pas depuis lui). Sans eux, la
+# sélection de cible (in situ au sceau / clone figé + avance nommée) serait crue sur
+# parole : un banc qui figerait TOUJOURS ou qui jugerait TOUJOURS le disque laisserait
+# passer exactement les défauts que l'arbitrage t_18b1189a ferme. Ces cas rendent le
+# mécanisme falsifiable — donc ils ne sont pas tautologiques.
 
 
-def test_limite_hors_de_la_cle_d_arimage_le_verdict_est_INDETERMINE(ancrage, clone_base):
-    """Limite — hors de la clé, le verdict est INDÉTERMINÉ : ni échec, ni vert.
+def test_limite_un_arbre_en_avance_du_sceau_juge_le_sceau_figure_et_date_l_avance(clone_base, clone_tip):
+    """Limite — le banc d'origine de ce scénario : un arbre qui n'est plus le sceau.
 
-    Le cas est décisif parce qu'il vérifie les DEUX moitiés :
-      - il ne prononce pas d'échec : `determiner` lève `Skipped`, pas une `AssertionError` ;
-      - il ne prononce pas de vert non plus : l'action MESURÉE n'est JAMAIS exécutée, et le
-        témoin `appels` le prouve (une action lancée puis « sautée » serait un vert déguisé) ;
-      - le message NOMME la révision d'arrimage ET la révision mesurée.
+    L'arbre de sonde est le clone du banc ARRÊTÉ AU HEAD DE LA BRANCHE (`clone_tip`) :
+    s'il a avancé sur le sceau, le verdict ne peut plus porter sur lui — c'est un
+    conflit d'échéance, pas un défaut. Le contrat (arbitrage `t_18b1189a`, D2) n'est
+    plus un skip mais une PREUVE :
+
+      - la cible est le clone FIGÉ à la constante (`clone_base`, le sceau tel que
+        ratifié), et
+      - l'avance est datée : les commits entre le sceau et le HEAD de l'arbre mesuré
+        sont nommés, et l'avance se termine au HEAD mesuré.
+
+    Témoin de non-vacuité : si l'arbre de sonde EST le sceau, le cas ÉCHOUE (pas de
+    sujet : rien à dater) — un banc qui « daterait » n'importe quoi serait un vert par
+    vacuité.
     """
-    vivant = clone_base["dir"]  # clone au commit de la planche : hors de la clé par
-    rev = _revision_courante(vivant)  # construction (la planche a ete corrigee apres)
-    assert rev is not None, "HEAD irrésolu dans le clone de sonde"
-    assert rev != ancrage["sha"], (
-        "l'arbre de sonde est À la clé d'arrimage %r : ce cas n'a plus de sujet, il faut "
-        "le re-pointer sur un arbre réellement hors clé" % ancrage["cle"])
-
-    appels = []
-
-    def action():
-        appels.append("exécutée")
-        return "VERT"
-
-    with pytest.raises(pytest.skip.Exception) as exc:
-        ancrage["determiner"](action, vivant)
-    msg = str(exc.value)
-
-    assert "INDÉTERMINÉ" in msg, (
-        "le verdict hors clé doit être INDÉTERMINÉ, jamais ÉCHEC : %r" % msg)
-    assert ancrage["cle"] in msg, (
-        "le verdict doit NOMMER la révision d'arrimage %r : %r" % (ancrage["cle"], msg))
-    assert rev[:10] in msg, (
-        "le verdict doit NOMMER la révision mesurée %s : %r" % (rev[:10], msg))
-    assert not appels, (
-        "un verdict INDÉTERMINÉ ne doit pas AUSSI exécuter la mesure : ce serait un vert "
-        "déguisé, pas une abstention")
-    print("witness INDÉTERMINÉ : clé=%s mesuré=%s · mesure exécutée=%s"
-          % (ancrage["cle"], rev[:10], bool(appels)))
+    sonde = clone_tip["dir"]
+    head_sonde = _revision_courante(sonde)
+    assert head_sonde is not None, "HEAD irrésolu dans le clone de sonde"
+    t = choix_cible(clone_base["dir"], checkout=sonde)
+    assert t["a_la_seau"] is False, (
+        "l'arbre de sonde est déjà au sceau %r : ce cas n'a plus de sujet (un arbre en "
+        "avance est requis pour dater l'avance) — re-pointez le banc sur une branche "
+        "ayant avancé sur le sceau" % t["seal"])
+    assert t["avance"], "l'avance du sceau doit être NON VIDE sur un arbre en avance"
+    assert t["avance"][-1] == head_sonde, (
+        "l'avance datée doit se TERMINER au HEAD de l'arbre mesuré %s : %r"
+        % (head_sonde[:10], [c[:10] for c in t["avance"]]))
+    assert t["sha"] not in t["avance"], "l'avance ne contient pas le sceau lui-même"
+    # Le sceau figé reste JUGÉ par le script du clone (garde d'auto-racine : l'arbre
+    # étranger est refusé) : la concordance prouve que le sceau est intact tel que
+    # ratifié — ce n'est pas une abstention déguisée.
+    p = measure(t["dir"], t["plate"], t["script"])
+    assert p.returncode == 0, (
+        "le sceau figé doit rester en concordance (l'avance ne doit pas l'écarter "
+        "silencieusement) : rc=%d\n%s" % (p.returncode, p.stdout + p.stderr))
+    assert "concordance" in p.stdout, p.stdout
+    print("witness avance datée : %d commit(s) entre le sceau %s et le HEAD de la sonde "
+          "%s — le sceau est jugé FIGÉ, l'avance est nommée"
+          % (len(t["avance"]), t["seal"], head_sonde[:10]))
 
 
-def test_limite_dans_la_cle_d_arimage_le_verdict_reste_DETERMINE(ancrage, clone_ancrage):
-    """Limite — dans la clé, le verdict redevient DÉTERMINÉ : la mesure est EXÉCUTÉE.
+def test_limite_le_sceau_sur_le_sceau_est_juge_in_situ_sur_le_disque(clone_base):
+    """Limite — le contrôle inverse : un arbre qui EST le sceau se juge IN SITU, sur le disque.
 
-    Le contrôle inverse du cas précédent, et il porte sur le témoin : un `determiner` qui
-    skipperait toujours éteindrait les rouges de conflit d'échéance sans rien prouver. Ici
-    l'action doit rendre son résultat ET laisser sa trace.
+    Le mécanisme ne doit pas tout figer : quand le checkout mesuré EST le sceau, la
+    cible est le disque lui-même (pas un clone) et l'avance est vide. C'est cette
+    position qui fait rougir le banc si le sceau est muté sur place (sonde du §2 : un
+    chiffre de la planche muté → le banc échoue en nommant le champ) : le disque est la
+    référence, pas une copie.
     """
-    c = clone_ancrage
-    assert _revision_courante(c["dir"]) == ancrage["sha"], (
-        "le clone d'ancrage doit être à la clé %r (sha %s)"
-        % (ancrage["cle"], ancrage["sha"][:10]))
-    assert hors_ancrage(c["dir"]) is False, (
-        "l'arbre ramené à la clé ne peut pas être daté hors clé")
-    assert hors_ancrage(REPO) == (ancrage["courant"] != ancrage["sha"]), (
-        "la datation de l'arbre du banc doit être MESURÉE, pas supposée")
-
-    temoin = []
-
-    def action():
-        temoin.append("exécutée")
-        return "DÉTERMINÉ"
-
-    assert ancrage["determiner"](action, c["dir"]) == "DÉTERMINÉ"
-    assert temoin, (
-        "dans la clé, le verdict est DÉTERMINÉ : la mesure doit être exécutée pour de vrai")
-    print("witness DÉTERMINÉ : clé=%s (sha %s) · arbre du banc=%s · mesuré=%s"
-          % (ancrage["cle"], ancrage["sha"][:10],
-             (ancrage["courant"] or "?")[:10], c["dir"]))
+    sonde = clone_base["dir"]
+    t = choix_cible(sonde, checkout=sonde)
+    assert t["a_la_seau"] is True, (
+        "le clone de sonde doit être AU sceau %r pour exercer la position in situ : "
+        "cible %r" % (t["seal"], t["mode"]))
+    assert t["dir"] == Path(sonde), (
+        "à la constante, la cible est le DISQUE du checkout mesuré, pas une copie : %r"
+        % t["dir"])
+    assert t["avance"] == [], "à la constante, l'avance du sceau est VIDE"
+    assert t["seal"] in t["message"], (
+        "la datation doit NOMMER le sceau %r : %r" % (t["seal"], t["message"]))
+    p = measure(t["dir"], t["plate"], t["script"])
+    assert p.returncode == 0 and "concordance" in p.stdout, (
+        "le sceau in situ doit être en concordance avec son propre registre : rc=%d\n%s"
+        % (p.returncode, p.stdout + p.stderr))
+    print("witness sceau in situ : cible disque %s · avance vide · concordance rc=0"
+          % t["seal"])
 
 
-def test_erreur_une_cle_d_arimage_irresolue_est_nommee():
-    """Erreur — la clé ne résout plus : le banc échoue en NOMMANT la clé irrésolue.
+def test_erreur_la_constante_du_sceau_introuvable_est_nommee():
+    """Erreur — la constante du sceau ne résout plus : le banc échoue en la NOMMANT.
 
-    Un banc qui ne peut pas dater son jugement doit le DIRE. Le silence serait le pire des
-    cas : un verdict rendu sans révision, c'est-à-dire un verdict qui ne prouve rien.
+    Un banc qui ne peut pas dater son jugement doit le DIRE. Le silence serait le pire
+    des cas : un verdict rendu sans révision, c'est un verdict qui ne prouve rien — et
+    un skip serait un vert par vacuité (scénario « la constante du sceau ne peut pas
+    être résolue » du §2 : aucun skip, aucun vert).
 
-    Le cas porte son contrôle positif dans le même souffle : la clé DÉCLARÉE résout, sinon
-    on ne saurait pas distinguer « clé morte » de « banc cassé ».
+    Le cas porte son contrôle positif dans le même souffle : la constante DÉCLARÉE
+    résout, sinon on ne saurait pas distinguer « sceau mort » de « banc cassé ».
     """
     cle, sha = ancrage_du_registre(REPO)
     assert len(sha) == 40 and re.fullmatch(r"[0-9a-f]{40}", sha), (
-        "la clé déclarée %r doit résoudre vers un SHA complet : %r" % (cle, sha))
+        "la constante déclarée %r doit résoudre vers un SHA complet : %r" % (cle, sha))
     for rel in (PLATE_REL, MEASURE_REL):
         p = _run(["git", "-C", str(REPO), "cat-file", "-e", "%s:%s" % (cle, rel)])
         assert p.returncode == 0, (
-            "la clé d'arrimage %r doit porter %s — sinon elle ne date rien" % (cle, rel))
-    print("witness clé résolue : %s -> %s · planche et mesure portées" % (cle, sha[:10]))
+            "la constante du sceau %r doit porter %s — sinon elle ne date rien"
+            % (cle, rel))
+    print("witness sceau résolu : %s -> %s · planche et mesure portées" % (cle, sha[:10]))
 
-    morte = "6d787c5-nexiste-pas"
+    morte = "e4da869-d8e"
     assert _rev(REPO, morte) is None, (
-        "le contrôle du cas d'erreur exige une clé qui NE résout PAS : %r résout" % morte)
+        "le contrôle du cas d'erreur exige une constante qui NE résout PAS : %r résout"
+        % morte)
     with pytest.raises(AncrageIrresolu) as exc:
         ancrage_du_registre(REPO, morte)
     msg = str(exc.value)
     assert morte in msg, (
-        "l'échec doit NOMMER la clé irrésolue %r : %r" % (morte, msg))
-    assert "arrimage" in msg, (
-        "l'échec doit dire QUELLE clé ne résout pas (clé d'arrimage) : %r" % msg)
-    print("witness clé irrésolue : %r -> AncrageIrresolu nommant la clé" % morte)
+        "l'échec doit NOMMER le commit attendu %r : %r" % (morte, msg))
+    assert "sceau" in msg, (
+        "l'échec doit dire QUOI ne résout pas (la constante du sceau) : %r" % msg)
+    print("witness constante introuvable : %r -> AncrageIrresolu nommant le commit attendu"
+          % morte)
