@@ -43,7 +43,7 @@ n'intervient que là où il faut juger. Un pipeline au repos coûte zéro token.
 | `workflows/` | schémas et templates de workflow YAML |
 | `plugins/` | plugins de l'app desktop (boutons Discord, UI dashboard) |
 | `assets/` | ressources de rendu (mermaid embarqué) |
-| `tests/` | 232 tests, sans dépendance externe |
+| `tests/` | 256 tests, sans dépendance externe |
 
 > **Une seule copie par fichier.** Le dossier `bridge/` a existé et dupliquait 12
 > fichiers de `pipeline/` ; l'un d'eux (`pj_graphwatch.py`) avait divergé de 382
@@ -126,6 +126,7 @@ hermes kanban boards set-default-workdir pj-<repo> /chemin/vers/clone-dev
 | `pj_run_contract.py` | **contrat de résultat par run** : distingue « travail FAIT, paperwork manquant » (`work_done_paperwork_missing`) de « worker JAMAIS démarré » (`never_started_infra` — HTTP 400, quota, auth), là où le dispatcher ne voit qu'un `protocol_violation`. Preuves : run-metadata, events `gave_up`, `latest_summary`, log worker (`Messages: N (x user, y tool calls)`) | exit 1 = carte à trancher, 2 = source illisible |
 | `pj_autonomy.py` | **graduation d'autonomie** du moteur YAML (`orchestration.autonomy` / `autonomy:` par étape, niveaux `off|low|medium|high`) : décide de façon 0 LLM quelle étape s'exécute seule et quelle étape **escale** (carte `blocked needs_input`). Les effets irréversibles (push/merge/`rm -f`) escalement sous `medium` ; toute étape agentique escale sous `low` ; rien ne s'exécute seul sous `off`. Audit sans exécution : `pj_autonomy.py --workflow <wf.yaml> [--json]` | exit 0 = politique lue, 2 = niveau invalide / fichier introuvable |
 | `pj_validator_model.py` | **modèle de validation distinct du dev** (P4) : pique le modèle sur les cartes du graphe par rôle (`dev-*/worktree-*` → `dev`, `test-*/conv-*` → `validator`, `doc-*` → `doc`, `t6` → `master`) via `--model`/`--provider` à la création. Résolution : `slices.json` (slice > racine : `dev_model`/`validator_model`/…) > `PJ_<ROLE>_MODEL` > défaut du profil. Le signal `validator-model == dev-model` (self-confirmation) est logué, **jamais bloquant** (dégradation ouverte) | exit 0 = config lue, 2 = slices.json illisible |
+| `resume:` (DSL, P6) | **reprise de session** d'une étape agentique : à chaque tentative, l'id de session est capturé (`--pass-session-id`) et posé dans `.pipeline/<ticket>.sessions.json` par `(ticket, étape, rôle)`. Au retry, si l'étape déclare `resume: true`, le même id est repassé via `--resume` (contexte + tool calls conservés) ; défaut = fork (session neuve, comportement historique). Dégradation ouverte : id absent → pas de reprise | — (moteur) |
 
 Le gate de readiness est **opt-in** (variable `PJ_READINESS_REPO`) et à dégradation
 ouverte : script absent ou en erreur → pull sans gate, jamais de cron mort.

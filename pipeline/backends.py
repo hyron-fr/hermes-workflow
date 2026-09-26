@@ -93,17 +93,35 @@ def extract_json(text: str) -> dict:
 
 
 def run_hermes(prompt: str, profile: str, model: str | None = None,
-               timeout: int = 600) -> str:
+               timeout: int = 600, resume_session: str | None = None) -> str:
     bin_ = _which("hermes") or os.path.expanduser(
         "~/.hermes/hermes-agent/venv/bin/hermes")
     cmd = [bin_, "-p", profile, "chat", "-q", prompt]
     if model:
         cmd += ["-m", model]
+    if resume_session:
+        cmd += ["--resume", resume_session]
     return _run(cmd, timeout=timeout)
 
 
+SESSION_RE = re.compile(r"^Session:\s+(\S+)", re.M)
+
+
+def parse_session_id(stdout: str) -> str | None:
+    """Extrait l'identifiant de session de la sortie `--pass-session-id`.
+
+    Le bloc d'arrêt du CLI hermes contient `Session: 20260926_113527_bec163`
+    (ligne ancrée, pas de faux positif). Retourne None si absent (le CLI a
+    changé de format, la session n'existe pas...) — le moteur dégrade
+    silencieusement : pas de reprise, session neuve au prochain retry.
+    """
+    m = SESSION_RE.search(stdout or "")
+    return m.group(1) if m else None
+
+
 def run_hermes_artifact(prompt: str, out_path: str, profile: str = "default",
-                        model: str | None = None, timeout: int = 600) -> str:
+                        model: str | None = None, timeout: int = 600,
+                        resume_session: str | None = None) -> tuple[str, str | None]:
     """Exécute un agent hermes qui ÉCRIT son JSON dans un fichier.
 
     Pattern "structured output as artifact" : au lieu de demander à l'agent de
@@ -111,7 +129,11 @@ def run_hermes_artifact(prompt: str, out_path: str, profile: str = "default",
     transcript plein de prose), on lui demande d'écrire le JSON dans un fichier
     via son outil write_file. On lit ensuite le fichier — pas de parsing.
 
-    Retourne le contenu du fichier (JSON brut).
+    Retourne `(contenu du fichier JSON brut, session_id ou None)` :
+    `--pass-session-id` est toujours passé pour CAPTURER l'id de session,
+    utilisé par le moteur pour la reprise d'étape (`resume`, P6).
+    `resume_session` : reprise de la session (le contexte + tool calls de la
+    tentative précédente sont conservés) au lieu d'une session neuve (fork).
     """
     bin_ = _which("hermes") or os.path.expanduser(
         "~/.hermes/hermes-agent/venv/bin/hermes")
@@ -123,17 +145,20 @@ def run_hermes_artifact(prompt: str, out_path: str, profile: str = "default",
         f"Le fichier doit contenir UNIQUEMENT le JSON valide, sans texte "
         f"autour. Réponds ensuite juste 'fait'."
     )
-    cmd = [bin_, "-p", profile, "chat", "-q", artifact_prompt]
+    cmd = [bin_, "-p", profile, "chat", "-q", artifact_prompt,
+           "--pass-session-id"]
     if model:
         cmd += ["-m", model]
-    _run(cmd, timeout=timeout)
+    if resume_session:
+        cmd += ["--resume", resume_session]
+    stdout = _run(cmd, timeout=timeout)
     # Lit le fichier écrit par l'agent.
     if not os.path.exists(out_path):
         raise RuntimeError(
             f"agent hermes n'a pas écrit le fichier {out_path} "
             f"(outil write_file non utilisé)")
     with open(out_path) as f:
-        return f.read()
+        return f.read(), parse_session_id(stdout)
 
 
 def run_dsh(prompt: str, profile: str = "headless", timeout: int = 600) -> str:

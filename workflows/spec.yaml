@@ -78,6 +78,7 @@ steps:
     output: { kind: structured, schema: ./schemas/validation.json }
 
   # Étape 5 — Revue de cohérence globale.
+
   - id: coherence
     type: agentic
     prompt: |
@@ -93,11 +94,37 @@ steps:
     type: gate
     check: "all(r.get('data', {}).get('status') == 'ok' for r in revalidate.get('results', [])) and coherence.get('data', {}).get('status') == 'ok'"
     on_fail: revalidate
+    on_pass: review
+
+  # Étape 7 — Revue P0–P3 (rubrique de review, structured output).
+  # L'agent produit la liste des findings classés par gravité ; `pj_review.py`
+  # (0 LLM) tranche ensuite de façon déterministe (verdict P0–P3).
+  - id: review
+    type: agentic
+    prompt: |
+      Tu es réviseur de code/spec. Relis la spec consolidée ci-dessous et
+      produit une REVUE P0–P3 : une liste de findings, chacun avec
+      severity (P0 blocant / P1 sérieux / P2 mineur / P3 nit), title, et —
+      OBLIGATOIRE pour P0 et P1 — evidence ou repro. Un P0/P1 sans preuve
+      est interdit (le contrat pj_review le rejette en exit 2).
+      Réponds en JSON : {"findings": [{severity, title, evidence?|repro?}], "summary"}.
+      Spec consolidée : {{steps.consolidate}}
+    agent: { role: reviewer, backend: hermes, profile: default, model: deepseek-v4-flash:cloud }
+    input: [gate]
+    output: { kind: structured, schema: ./schemas/review.json }
+
+  # Étape 8 — Gate de review : P0/P1 présent -> on re-valide ; sinon finalize.
+  # Verdict déterministe (même logique que pipeline/pj_review.py) : ≥1 P0
+  # => block, ≥1 P1 => flag, P2/P3 seulement => pass.
+  - id: review_gate
+    type: gate
+    check: "not any(x.get('severity') in ('P0', 'P1') for x in review.get('results', [{}])[0].get('data', {}).get('findings', []))"
+    on_fail: revalidate
     on_pass: finalize
 
-  # Étape 7 — Update kanban + sous-tickets + GitHub + Discord.
+  # Étape 9 — Update kanban + sous-tickets + GitHub + Discord.
   - id: finalize
     type: deterministic
     actions:
-      - hermes kanban --board {{board}} comment {{ticket.id}} "Spec validée par le pipeline spec (multi-agents + gate)."
+      - hermes kanban --board {{board}} comment {{ticket.id}} "Spec validée par le pipeline spec (multi-agents + gate + review P0–P3)."
       - gh issue edit {{ticket.issue_number}} --repo hyron-fr/hermes-experiment --body "Spec validée (pipeline spec)."

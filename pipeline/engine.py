@@ -325,6 +325,62 @@ def state_path(ticket_id: str) -> Path:
     return STATE_DIR / f"{ticket_id}.json"
 
 
+# ------------------------------------------------ P6 : reprise de session
+#
+# Repère Factory Droid « persistent sessions : resume / fork ». À chaque
+# tentative d'une étape agentique, l'id de session est capturé
+# (--pass-session-id) et posé dans un sidecar par (ticket, étape, rôle).
+# Au retry, si l'étape déclare `resume: true` (et que le run précédent
+# n'a PAS abouti à un résultat validé), le même id est repassé via
+# --resume : le contexte + tool calls de la tentative précédente sont
+# conservés. Défaut = fork (session neuve) : le comportement historique.
+# Dégradation ouverte : id absent/illisible -> pas de reprise, pas d'erreur.
+
+def session_sidecar_path(ticket_id: str) -> Path:
+    return STATE_DIR / f"{ticket_id}.sessions.json"
+
+
+def _load_sessions(ticket_id: str) -> dict:
+    p = session_sidecar_path(ticket_id)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_session(ticket_id: str, step_id: str, role: str,
+                 session_id: str | None) -> None:
+    """Capture l'id de session d'une tentative (best-effort, jamais bloquant)."""
+    if not session_id:
+        return
+    try:
+        data = _load_sessions(ticket_id)
+        data[f"{step_id}:{role}"] = session_id
+        p = session_sidecar_path(ticket_id)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, ensure_ascii=False))
+    except OSError:
+        pass
+
+
+def resume_session_for(step: dict, ticket_id: str, step_id: str,
+                       role: str) -> str | None:
+    """Id de session à REPRENDRE pour cette tentative (P6), ou None.
+
+    Seuil : l'étape doit déclarer `resume: true` ET le run précédent n'avoir
+    PAS produit un résultat validé (un résultat ok est mis en cache côté
+    `steps` : il ne repasse pas ici, donc la capture reste correcte).
+    """
+    if not step.get("resume"):
+        return None
+    data = _load_sessions(ticket_id)
+    sid = data.get(f"{step_id}:{role}")
+    return str(sid) if sid else None
+
+
 def load_state(ticket_id: str) -> dict:
     p = state_path(ticket_id)
     if p.exists():
@@ -442,11 +498,17 @@ def make_agentic_node(step: dict, labels: dict):
                 backend = agent.get("backend", "hermes")
                 if backend == "hermes":
                     out_path = ARTIFACT_DIR / f"{step['id']}_{agent.get('role', 'agent')}.json"
-                    raw = run_hermes_artifact(
+                    resume = resume_session_for(
+                        step, state["ticket"].get("id", ""),
+                        step["id"], agent.get("role", "agent"))
+                    raw, sid = run_hermes_artifact(
                         prompt, str(out_path),
                         profile=agent.get("profile", "default"),
                         model=agent.get("model"), timeout=600,
+                        resume_session=resume,
                     )
+                    save_session(state["ticket"].get("id", ""),
+                                 step["id"], agent.get("role", "agent"), sid)
                     data = json.loads(raw)
                 else:
                     raw = run_agent(agent, prompt)
@@ -473,11 +535,17 @@ def make_agentic_node(step: dict, labels: dict):
                     # JSON dans un fichier, on lit le fichier (pas de parsing de
                     # transcript). Fichier dédié par étape + rôle.
                     out_path = ARTIFACT_DIR / f"{step['id']}_{agent.get('role', 'agent')}.json"
-                    raw = run_hermes_artifact(
+                    resume = resume_session_for(
+                        step, state["ticket"].get("id", ""),
+                        step["id"], agent.get("role", "agent"))
+                    raw, sid = run_hermes_artifact(
                         prompt, str(out_path),
                         profile=agent.get("profile", "default"),
                         model=agent.get("model"), timeout=600,
+                        resume_session=resume,
                     )
+                    save_session(state["ticket"].get("id", ""),
+                                 step["id"], agent.get("role", "agent"), sid)
                     data = json.loads(raw)
                 else:
                     # Autres backends (dsh, claude) : parsing transcript (moins

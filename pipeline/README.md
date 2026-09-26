@@ -68,6 +68,34 @@ un workflow ne doit PAS compter sur la détection). Un `gate` n'est jamais
 escaladé (évaluation lecture-seule, aucun effet). Audit sans exécuter :
 `python3 pipeline/pj_autonomy.py --workflow workflows/spec.yaml [--json]`.
 
+### Reprise de session (`resume:`, 0 LLM)
+
+Repère Factory Droid (« persistent sessions : fork a session, resume
+long-running missions »). Chaque tentative d'une étape agentique capture
+l'identifiant de sa session hermes (`--pass-session-id`) dans un sidecar
+`.pipeline/<ticket>.sessions.json`, clé `<étape>:<rôle>`. À la ré-exécution
+du ticket (gate `on_fail` → retry), une étape qui déclare `resume: true`
+reprend cette session via `--resume` : le contexte et les tool calls de la
+tentative précédente sont conservés au lieu de repartir de zéro.
+
+- Défaut (pas de `resume:`) = **fork** : session neuve, comportement
+  historique inchangé.
+- `resume:` est par étape, et s'applique par **rôle** : dans une étape
+  `parallel`, chaque agent reprend sa propre session.
+- Dégradation ouverte : id de session absent ou illisible → pas de reprise,
+  aucune erreur.
+- Un résultat validé est mis en cache côté `.pipeline/<ticket>.json` et ne
+  repasse jamais par la session : la reprise ne concerne que les tentatives
+  non abouties.
+
+```yaml
+  - id: consolidate
+    type: agentic
+    resume: true             # au retry, reprendre la session de la tentative
+                             # précédente (contexte + tool calls conservés)
+    agent: { role: consolidator, ... }
+```
+
 Types d'étape :
 
 - `agentic` — un ou plusieurs agents (`agents:` en parallèle, ou `agent:`
