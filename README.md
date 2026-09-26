@@ -43,7 +43,7 @@ n'intervient que là où il faut juger. Un pipeline au repos coûte zéro token.
 | `workflows/` | schémas et templates de workflow YAML |
 | `plugins/` | plugins de l'app desktop (boutons Discord, UI dashboard) |
 | `assets/` | ressources de rendu (mermaid embarqué) |
-| `tests/` | 164 tests, sans dépendance externe |
+| `tests/` | 217 tests, sans dépendance externe |
 
 > **Une seule copie par fichier.** Le dossier `bridge/` a existé et dupliquait 12
 > fichiers de `pipeline/` ; l'un d'eux (`pj_graphwatch.py`) avait divergé de 382
@@ -124,6 +124,7 @@ hermes kanban boards set-default-workdir pj-<repo> /chemin/vers/clone-dev
 | `pj_spawn_guard.py` | liste blanche d'assignees par board | bloque la carte |
 | `pj_readiness.py` | **Agent Readiness du repo cible** (niveaux 1–4, piliers Factory, seuil 80 %) — branché dans le pont : `PJ_READINESS_REPO=<clone> PJ_READINESS_MIN=3 gh_kanban_bridge.py pull` suspend l'import si le repo ne permet pas de valider un worker | exit 1 = niveau insuffisant |
 | `pj_run_contract.py` | **contrat de résultat par run** : distingue « travail FAIT, paperwork manquant » (`work_done_paperwork_missing`) de « worker JAMAIS démarré » (`never_started_infra` — HTTP 400, quota, auth), là où le dispatcher ne voit qu'un `protocol_violation`. Preuves : run-metadata, events `gave_up`, `latest_summary`, log worker (`Messages: N (x user, y tool calls)`) | exit 1 = carte à trancher, 2 = source illisible |
+| `pj_autonomy.py` | **graduation d'autonomie** du moteur YAML (`orchestration.autonomy` / `autonomy:` par étape, niveaux `off|low|medium|high`) : décide de façon 0 LLM quelle étape s'exécute seule et quelle étape **escale** (carte `blocked needs_input`). Les effets irréversibles (push/merge/`rm -f`) escalement sous `medium` ; toute étape agentique escale sous `low` ; rien ne s'exécute seul sous `off`. Audit sans exécution : `pj_autonomy.py --workflow <wf.yaml> [--json]` | exit 0 = politique lue, 2 = niveau invalide / fichier introuvable |
 
 Le gate de readiness est **opt-in** (variable `PJ_READINESS_REPO`) et à dégradation
 ouverte : script absent ou en erreur → pull sans gate, jamais de cron mort.

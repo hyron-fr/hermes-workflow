@@ -42,6 +42,7 @@ from pathlib import Path
 import yaml
 
 from backends import run_hermes_artifact, run_agent, extract_json
+import pj_autonomy
 
 # LangGraph
 from langgraph.graph import StateGraph, START, END
@@ -356,6 +357,44 @@ class WFState(TypedDict, total=False):
     iterations: int
     dry_run: bool
     base_dir: str
+    autonomy_level: str   # niveau d'autonomie du workflow (pj_autonomy)
+    escalated: str        # id de l'étape escaladée ("" si aucune)
+
+
+# ------------------------------------------------------------ autonomie
+
+def _autonomy_guard(step: dict, state: WFState) -> dict | None:
+    """Politique d'autonomie avant l'exécution d'une étape (0 LLM).
+
+    Retourne une mise à jour d'état si l'étape doit être ESCALADÉE (le
+    graphe s'arrête ensuite sur END), None si elle peut s'exécuter.
+    Le gate n'est jamais escaladé (routage lecture-seule, aucun effet).
+    `dry_run` : décision prise, aucun effet de bord (pas de comment ni
+    de block kanban).
+    """
+    level = state.get("autonomy_level") or pj_autonomy.DEFAULT_LEVEL
+    verdict, reason = pj_autonomy.decision(
+        pj_autonomy.effective_level(step, level), step)
+    if verdict != "escalate":
+        return None
+    dry_run = state.get("dry_run", False)
+    sid = step.get("id", "?")
+    ticket = state.get("ticket", {}) or {}
+    board = state.get("board", DEFAULT_BOARD)
+    comment = pj_autonomy.escalate_comment(step, reason, board, ticket.get("id", ""))
+    if not dry_run:
+        try:
+            kanban("comment", ticket.get("id", ""), comment, board=board)
+        except Exception:
+            pass
+        try:
+            kanban("block", ticket.get("id", ""), "--kind", "needs_input",
+                   reason, board=board)
+        except Exception:
+            pass
+    return {"escalated": sid,
+            "steps": {sid: {"ok": False, "escalated": True,
+                            "reason": reason, "dry_run": dry_run}}}
 
 
 # ------------------------------------------------------------------ nœuds
@@ -376,6 +415,11 @@ def make_agentic_node(step: dict, labels: dict):
         base_dir = Path(state.get("base_dir", "."))
         schema = load_schema(schema_path, base_dir)
         dry_run = state.get("dry_run", False)
+        # Autonomie : décision AVANT toute exécution (off => le LLM ne
+        # doit PAS démarrer). Escalade -> le graphe s'arrête (arête sortante).
+        esc = _autonomy_guard(step, state)
+        if esc is not None:
+            return esc
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
         rename_thread(state["ticket"], step, "running", dry_run, labels)
 
@@ -460,6 +504,10 @@ def make_deterministic_node(step: dict, labels: dict):
             "board": state.get("board", DEFAULT_BOARD),
         }
         dry_run = state.get("dry_run", False)
+        # Autonomie : décision AVANT exécution (irréversible -> escalade).
+        esc = _autonomy_guard(step, state)
+        if esc is not None:
+            return esc
         rename_thread(state["ticket"], step, "running", dry_run, labels)
         commands = step.get("command") or step.get("actions") or []
         if isinstance(commands, str):
@@ -544,6 +592,17 @@ def build_graph(wf: dict, base_dir: Path):
 
     # Arêtes : on relie chaque étape à la suivante (ordre déclaratif), sauf
     # les étapes avec on_fail / gate qui routent conditionnellement.
+    # Autonomie : une étape escaladée (_autonomy_guard pose `escalated`)
+    # arrête le graphe — le ticket est bloqué needs_input pour l'humain.
+    # La vérification se fait sur les ARÊTES sortantes de chaque nœud.
+    def _esc(cond) :
+        """Enveloppe un routeur : `escalated` court-circuite vers END."""
+        def router(s: WFState) -> str:
+            if s.get("escalated"):
+                return END
+            return cond(s)
+        return router
+
     for i, step in enumerate(steps):
         sid = step["id"]
         stype = step.get("type", "agentic")
@@ -559,22 +618,27 @@ def build_graph(wf: dict, base_dir: Path):
                                 and s.get("id") == "finalize"), on_pass)
             g.add_conditional_edges(
                 sid,
-                lambda s, st=step, op=on_pass, of=on_fail, fi=finalize_id:
+                _esc(lambda s, st=step, op=on_pass, of=on_fail, fi=finalize_id:
                     fi if s["steps"].get(st["id"], {}).get("max_iterations")
-                    else (op if s["steps"].get(st["id"], {}).get("passed") else of),
-                {on_pass: on_pass, on_fail: on_fail, finalize_id: finalize_id},
+                    else (op if s["steps"].get(st["id"], {}).get("passed") else of)),
+                {on_pass: on_pass, on_fail: on_fail,
+                 finalize_id: finalize_id, END: END},
             )
         elif step.get("on_fail"):
             # Étape avec on_fail : si échec -> on_fail, sinon -> suivant.
             on_fail = step["on_fail"]
             g.add_conditional_edges(
                 sid,
-                lambda s, st=step, n=nxt, of=on_fail:
-                    of if not s["steps"].get(st["id"], {}).get("ok") else n,
-                {nxt: nxt, on_fail: on_fail},
+                _esc(lambda s, st=step, n=nxt, of=on_fail:
+                    of if not s["steps"].get(st["id"], {}).get("ok") else n),
+                {nxt: nxt, on_fail: on_fail, END: END},
             )
         else:
-            g.add_edge(sid, nxt)
+            g.add_conditional_edges(
+                sid,
+                _esc(lambda s, n=nxt: n),
+                {nxt: nxt, END: END},
+            )
 
     g.add_edge(START, steps[0]["id"])
     return g.compile()
@@ -594,6 +658,7 @@ def run_workflow(wf: dict, ticket_id: str, board: str, dry_run: bool,
         "board": board,
         "dry_run": dry_run,
         "base_dir": str(base_dir),
+        "autonomy_level": pj_autonomy.workflow_level(wf),
     }
 
     # Idempotence : repart des étapes déjà réussies (cache).
@@ -614,7 +679,9 @@ def run_workflow(wf: dict, ticket_id: str, board: str, dry_run: bool,
     final = {
         "ticket": ticket_id,
         "steps": result.get("steps", {}),
-        "ok": result.get("steps", {}).get("finalize", {}).get("ok", False),
+        "ok": (not result.get("escalated")
+               and result.get("steps", {}).get("finalize", {}).get("ok", False)),
+        "escalated": result.get("escalated", ""),
     }
     if not dry_run:
         save_state(ticket_id, final)

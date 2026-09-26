@@ -27,12 +27,14 @@ name: spec
 orchestration:
   mode: structured_output
   max_iterations: 10        # borne les sauts ARRIÈRE (itérations)
+  autonomy: medium          # graduation d'autonomie (off|low|medium|high, défaut high)
 
 steps:
   - id: viewpoints
     type: agentic            # ou deterministic / gate
     parallel: true
     prompt: "..."            # template {{ticket.*}} / {{steps.<id>}}
+    autonomy: high           # override par étape (préférence sur orchestration.autonomy)
     agents:
       - { role: ddd, backend: hermes, profile: default, model: ... }
       - { role: tdd, backend: dsh, profile: headless }
@@ -44,6 +46,27 @@ steps:
     on_fail: revalidate      # saut arrière = itération
     on_pass: finalize        # saut avant = progression
 ```
+
+### Autonomie (graduation du niveau d'autorisation, 0 LLM)
+
+Repère Factory Droid (« ctrl+L pour autonomy ») : le workflow contrôle ce que
+le moteur est autorisé à **exécuter seul**, sans geste humain. Décision
+entièrement déterministe (`pj_autonomy.py`) — aucun appel LLM.
+
+| niveau    | comportement |
+|-----------|--------------|
+| `off`     | rien ne s'exécute seul : seule la route des gates (lecture-seule) tourne ; chaque étape **escale** (carte `blocked needs_input`, le ticket attend l'humain) |
+| `low`     | seules les étapes déterministes **réversibles** s'exécutent ; toute étape agentique (LLM autonome) escale |
+| `medium`  | tout s'exécute sauf les **effets irréversibles** (push, merge, `rm -rf`, `gh pr merge`…) : ceux-ci escalement |
+| `high`    | tout s'exécute (comportement historique, défaut) |
+
+Résolution : `étape.autonomy` > `orchestration.autonomy` > `high`.
+
+Les effets irréversibles sont détectés de façon déterministe (regex sur
+`command:`/`actions:`) et sur la `side_effect:` déclarée (contrat explicite :
+un workflow ne doit PAS compter sur la détection). Un `gate` n'est jamais
+escaladé (évaluation lecture-seule, aucun effet). Audit sans exécuter :
+`python3 pipeline/pj_autonomy.py --workflow workflows/spec.yaml [--json]`.
 
 Types d'étape :
 
