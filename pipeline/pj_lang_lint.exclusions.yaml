@@ -28,3 +28,22 @@ protocoles:
     famille: protocole
     lecteur: "pipeline/pj_room_keeper.py:76"
     pourquoi: "machine-only room marker, anchored anywhere in the body, no human reader"
+
+# ----------------------------------------------------------------------------- hors_corpus
+#
+# Whole-file exemptions (card t_54a5f661, human decision of 2026-09-26, option 1):
+# English documents whose accented lines are legitimate quotations of the FROZEN
+# French contract, declared here — file by file, with the reason — instead of being
+# translated. Each entry names the file and why it stays out of the corpus.
+#
+# This section is FILE-level (the whole file is out of the scan corpus), not
+# span-level: it is a different kind of declaration from `protocoles` above, and a
+# whole-tree run stays rc=0 and SILENT only while every remaining violation is
+# either a frozen span or a file declared here.
+hors_corpus:
+  - fichier: "docs/architecture/context/issue-2.md"
+    pourquoi: "issue #2 specification (frozen French contract): BDD keywords and section titles quoted verbatim from the card contract"
+  - fichier: "docs/architecture/context/issue-2-datation.md"
+    pourquoi: "bench dating rule (decision 3 of arbitration t_ca894fd4): the accented lines are the two frozen uppercase verdict keys, quoted verbatim from the note"
+  - fichier: "docs/architecture/README.md"
+    pourquoi: "vault MOC, already English and declared out of the translation corpus by the plate ledger"
