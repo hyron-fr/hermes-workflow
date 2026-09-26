@@ -64,6 +64,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# P4 : modèle de validation distinct du dev. Dégradation ouverte : si le
+# module n'est pas co-localisé (copie isolée exécutée par un cron), on pique
+# simplement aucun modèle et on logue — le graphe part quand même.
+try:
+    import pj_validator_model
+except ImportError:
+    pj_validator_model = None
+
 HERMES_BIN = os.environ.get("PJ_HERMES_BIN") or os.path.expanduser(
     "~/.hermes/hermes-agent/venv/bin/hermes")
 BOARD = os.environ.get("PJ_BOARD", "")
@@ -436,6 +444,17 @@ def main() -> int:
             # Échec EXPLICITE avant toute création : rien en base, aucun auto_block.
             log(f"t6 {t6['id']} (issue #{issue}) : PLAN REFUSÉ — {e}")
             return 1
+        # Modèles par rôle (P4) : validator distinct du dev. Résolu depuis
+        # slices.json (slice > racine) puis env PJ_<ROLE>_MODEL. Signal
+        # de non-distinction logué, jamais bloquant (dégradation ouverte).
+        if pj_validator_model is not None:
+            models = pj_validator_model.resolve_role_models(doc, os.environ)
+            plan, model_warnings = pj_validator_model.annotate_plan(plan, models)
+            for w in model_warnings:
+                log(f"t6 {t6['id']}: {w}")
+            distinct, vreason = pj_validator_model.validator_differs(models)
+            if not distinct:
+                log(f"t6 {t6['id']}: {vreason}")
         if DRY:
             print(json.dumps(plan, indent=2))
             return 0
@@ -452,6 +471,10 @@ def main() -> int:
                     "--idempotency-key", f"pj-{c['key']}-{doc['repo']}-{issue}", "--json"]
             if c.get("branch"):
                 args += ["--branch", c["branch"]]
+            if c.get("model"):
+                args += ["--model", c["model"]]
+            if c.get("provider"):
+                args += ["--provider", c["provider"]]
             for p in c["parents"]:
                 args += ["--parent", ids.get(p, p)]
             ids[c["key"]] = json.loads(sh(*args))["id"]
