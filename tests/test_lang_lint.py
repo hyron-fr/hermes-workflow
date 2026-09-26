@@ -127,12 +127,16 @@ def walk_md(repo):
                   if ".git" not in p.parts)
 
 
-def build_tree(root, files, tracked):
+def build_tree(root, files, tracked, exclusions_text=None):
     """Dépôt git jetable : `files` = {chemin: contenu}, `tracked` = chemins indexés.
 
     Le fichier d'exclusion est recopié au chemin CANONIQUE dans le fixture : ainsi un
     scan « sans argument » trouve ses exclusions, qu'il les résolve relativement au cwd
-    ou relativement au script — le banc ne fige pas ce détail-là.
+    ou relativement au script — le banc ne fige pas ce détail-là. Par défaut c'est la
+    version CANONIQUE de l'arbre (`EXCLUSIONS`). `exclusions_text` permet d'y substituer
+    un contenu spécifique au fixture (ex. pour porter une section `hors_corpus:` qui ne
+    concerne QUE ce fixture) — sans quoi le `hors_corpus` de l'arbre réel rendrait le
+    fixture invalide (fichiers déclarés mais absents).
     """
     env = dict(os.environ)
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
@@ -146,7 +150,9 @@ def build_tree(root, files, tracked):
         cible.write_text(txt, encoding="utf-8")
     ex = root / EXCLUSIONS_REL
     ex.parent.mkdir(parents=True, exist_ok=True)
-    ex.write_text(EXCLUSIONS.read_text(encoding="utf-8"), encoding="utf-8")
+    contenu = exclusions_text if exclusions_text is not None \
+        else EXCLUSIONS.read_text(encoding="utf-8")
+    ex.write_text(contenu, encoding="utf-8")
     git(root, "add", "--", *(list(tracked) + [EXCLUSIONS_REL]), env=env)
     return env
 
@@ -632,3 +638,174 @@ def test_erreur_un_fichier_d_exclusion_illisible_sort_2(tmp_path):
     assert p.returncode == 2, resume(
         p, "fichier d'exclusion illisible : exit 2")
     print("witness exclusions illisibles : rc=%d" % p.returncode)
+
+
+# --------------------------------------------------------------------------- hors_corpus
+# Exemptions par FICHIER (carte t_54a5f661, décision humaine du 26/09, option 1) :
+# une section `hors_corpus:` dans le fichier d'exclusion déclare, fichier par
+# fichier avec un `pourquoi`, les documents anglais dont les accents sont des
+# citations du contrat français gelé. C'est une exemption NIVEAU FICHIER, distincte
+# des spans gelés (niveau SPAN) ci-dessus. Les 3 cas ci-dessous étendent le banc sans
+# en muter un seul : `build_tree` accepte un `exclusions_text` dédié au fixture, car le
+# `hors_corpus` de l'arbre réel nommerait des fichiers absents de tout fixture.
+
+
+def _exclusions_fixture(hors_corpus=()):
+    """Fichier d'exclusion de FIXTURE : les 2 protocoles gelés + la section
+    `hors_corpus:` propre au décor (jamais celle de l'arbre réel, qui nommerait
+    des fichiers absents du fixture)."""
+    lignes = [
+        "version: 1",
+        "protocoles:",
+        '  - litteral: "Importé depuis"',
+        "    famille: protocole",
+        '    lecteur: "pipeline/pj_lang_lint.py:1"',
+    ]
+    if hors_corpus:
+        lignes.append("hors_corpus:")
+        for chemin, raison in hors_corpus:
+            lignes.append('  - fichier: "%s"' % chemin)
+            lignes.append('    pourquoi: "%s"' % raison)
+    return "\n".join(lignes) + "\n"
+
+
+_FRANCAIS = "# T\n\nLe déployé est français ici.\n"
+
+
+def test_nominal_un_fichier_declare_hors_corpus_est_saute_et_le_scan_sort_0_muet(tmp_path):
+    """Nominal (carte t_54a5f661) — arbre entier vert avec les exemptions déclarées.
+
+    Les SEULS fichiers accentués de l'arbre sont déclarés hors-corpus : le scan sans
+    argument sort rc=0 et MUET (stdout et stderr vides) — l'exemption par fichier ne
+    creuse pas le gate (les non déclarés seraient signalés, cf. le 4e cas).
+    """
+    _require_sujets()
+    root = tmp_path / "hors_corpus_nominal"
+    fichiers = {
+        "README.md": _CORPS_PROPRE,
+        "docs/architecture/context/issue-2.md": _FRANCAIS,
+        "docs/architecture/context/issue-2-datation.md": _FRANCAIS,
+        "docs/architecture/README.md": _FRANCAIS,
+    }
+    build_tree(
+        root, fichiers, list(fichiers),
+        exclusions_text=_exclusions_fixture(hors_corpus=(
+            ("docs/architecture/context/issue-2.md", "contrat gelé"),
+            ("docs/architecture/context/issue-2-datation.md", "clé gelée"),
+            ("docs/architecture/README.md", "MOC hors corpus"),
+        )))
+
+    p = scan(cwd=root)
+    assert p.returncode == 0, resume(
+        p, "arbre où les seuls accentués sont hors-corpus : exit 0")
+    assert out_of(p).strip() == "", (
+        "le scan arbre entier doit rester MUET sur rc=0 (les déclarations sont lues "
+        "dans le fichier, pas annoncées) ; obtenu : %r" % out_of(p))
+    print("witness hors_corpus nominal : 3 fichiers déclarés -> rc=0 muet")
+
+
+def test_limite_un_scan_explicite_sur_un_fichier_exempte_nomme_l_exemption(tmp_path):
+    """Limite (carte t_54a5f661) — une demande explicite n'est JAMAIS muette.
+
+    Demander explicitement un fichier exempté sort rc=0 (conforme : l'exemption
+    s'applique) mais la sortie NOMME l'exemption appliquée (traçabilité) — le scan
+    sait qu'il a regardé ce que le fichier d'exclusion déclare.
+    """
+    _require_sujets()
+    root = tmp_path / "hors_corpus_explicite"
+    fichiers = {
+        "README.md": _CORPS_PROPRE,
+        "docs/architecture/context/issue-2.md": _FRANCAIS,
+    }
+    build_tree(
+        root, fichiers, list(fichiers),
+        exclusions_text=_exclusions_fixture(hors_corpus=(
+            ("docs/architecture/context/issue-2.md", "contrat gelé"),
+        )))
+
+    p = scan(args=["docs/architecture/context/issue-2.md"], cwd=root)
+    assert p.returncode == 0, resume(
+        p, "scan explicite d'un fichier exempté : exit 0 (l'exemption s'applique)")
+    out = out_of(p)
+    assert "docs/architecture/context/issue-2.md" in out, (
+        "la demande explicite doit nommer le fichier examiné :\\n%s" % out)
+    assert "hors corpus" in out, (
+        "la sortie doit nommer l'EXEMPTION appliquée (traçabilité, jamais muet sur "
+        "demande explicite) :\\n%s" % out)
+    assert "contrat gelé" in out, (
+        "le `pourquoi` de la déclaration doit être porté par la sortie :\\n%s" % out)
+    print("witness hors_corpus explicite : rc=0, exemption nommée + pourquoi")
+
+
+def test_erreur_une_entree_hors_corpus_vers_un_fichier_absent_est_2(tmp_path):
+    """Erreur (carte t_54a5f661) — une exemption ne passe JAMAIS inaperçue.
+
+    Une entrée `hors_corpus:` dont le chemin est SUIVI dans l'index mais manquant du
+    tree de travail est une erreur d'usage (rc 2) nommant le fichier absent : le scan
+    protègerait un fichier qui n'est plus là. (Un chemin que ce corpus n'a JAMAIS
+    porté reste inerte — convention des fixtures miroirs du layout, cf. le reste du
+    banc — sinon tout fixture serait invalide par la déclaration de l'arbre réel.)
+    """
+    _require_sujets()
+    root = tmp_path / "hors_corpus_absent"
+    cible = root / "docs/architecture/context/issue-2.md"
+    fichiers = {
+        "README.md": _CORPS_PROPRE,
+        "docs/architecture/context/issue-2.md": _FRANCAIS,
+    }
+    build_tree(
+        root, fichiers, list(fichiers),
+        exclusions_text=_exclusions_fixture(hors_corpus=(
+            ("docs/architecture/context/issue-2.md", "contrat gelé"),
+        )))
+    cible.unlink()  # suivi dans l'INDEX, absent du tree de travail
+
+    p = scan(cwd=root)
+    assert p.returncode == 2, resume(
+        p, "entrée hors_corpus vers un fichier suivi mais absent : exit 2 (usage, "
+           "jamais 1 ni 0)")
+    out = out_of(p)
+    assert "docs/architecture/context/issue-2.md" in out, (
+        "l'erreur doit NOMMER le fichier absent :\\n%s" % out)
+    assert "hors_corpus" in out, (
+        "l'erreur doit dire qu'il s'agit d'une déclaration hors_corpus périmée :\\n%s"
+        % out)
+    print("witness hors_corpus absent : rc=%d %r"
+          % (p.returncode, out.strip().splitlines()[0][:100]))
+
+
+def test_limite_la_prose_francaise_hors_exemptions_reste_attrapee(tmp_path):
+    """Limite (carte t_54a5f661) — l'exemption par fichier ne creuse pas le gate.
+
+    Un .md français NON déclaré, ajouté n'importe où dans l'arbre, est signalé : la
+    déclaration ne protège que les fichiers nommés, pas le reste du corpus.
+    """
+    _require_sujets()
+    root = tmp_path / "hors_corpus_pas_une_caverne"
+    fichiers = {
+        "README.md": _CORPS_PROPRE,
+        "docs/architecture/context/issue-2.md": _FRANCAIS,      # déclarée
+        "docs/nouvelle-note-fr.md": _FRANCAIS,                  # NON déclarée
+    }
+    contenu, nums = body(["# Note", "Un mot accentué: déployé ici."])
+    fichiers["docs/nouvelle-note-fr.md"] = contenu
+    ligne_faute = nums[1]
+    build_tree(
+        root, fichiers, list(fichiers),
+        exclusions_text=_exclusions_fixture(hors_corpus=(
+            ("docs/architecture/context/issue-2.md", "contrat gelé"),
+        )))
+
+    p = scan(cwd=root)
+    assert p.returncode == 1, resume(
+        p, ".md français hors exemptions : exit 1 (le gate n'est pas creusé)")
+    out = out_of(p)
+    trouves = reported(out)
+    assert any("nouvelle-note-fr.md" in rel and n == ligne_faute
+               for rel, n, _ in trouves), (
+        "le fichier NON déclaré doit être nommé avec sa LIGNE (mesurée) ; "
+        "violations lues : %r\\n%s" % ([(r, n) for r, n, _ in trouves], out))
+    assert not any("issue-2.md" in rel for rel, _, _ in trouves), (
+        "le fichier déclaré hors-corpus ne doit PAS être signalé :\\n%s" % out)
+    print("witness hors_corpus non-caverne : non déclaré nommé (ligne %d), "
+          "déclaré exempté" % ligne_faute)
