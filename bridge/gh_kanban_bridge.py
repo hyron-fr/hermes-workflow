@@ -7,8 +7,9 @@ Expérience : hyron-fr/hermes-experiment
 Deux directions, sans fichier d'état local (l'état est dérivé de GitHub
 et du board kanban) :
 
-  PULL  : issues ouvertes SANS label 'kanban' -> cartes kanban
-          (idempotency-key 'gh-issue-<n>' => pas de doublon au retry)
+  PULL  : issues ouvertes SANS label 'kanban' (déjà miroir d'une carte), 'triage'
+          (parquée pour le drill) ni 'decision' (objet de décision, pas une tâche)
+          -> cartes kanban (idempotency-key 'gh-issue-<n>' => pas de doublon au retry)
   PUSH  : cartes kanban 'done' liées à une issue GitHub encore ouverte
           -> l'issue est fermée avec un commentaire citant la tâche
           et le résumé du handoff du worker.
@@ -41,6 +42,18 @@ KANBAN_BOARD = os.environ.get("KANBAN_BOARD", "hermes-experiment")
 KANBAN_ASSIGNEE = os.environ.get("KANBAN_ASSIGNEE", "default")
 MIRROR_LABEL = "kanban"
 TRIAGE_LABEL = "triage"
+# Objet de DÉCISION (l'issue enfant d'une carte bloquée). Un objet de décision
+# n'est pas une tâche : l'importer déclencherait un graphe complet t1..t5 + une
+# room de délibération SOUS une carte de décision (mesuré : 6 cartes, 11 liens).
+# `kanban` ne peut pas servir ici : il veut dire « déjà miroir d'une carte », le
+# réutiliser réécrirait la trappe du gate sous un autre motif.
+DECISION_LABEL = "decision"
+# Échappatoire HUMAINE du gate de couverture : posée à la main sur une issue que
+# `coverage_verdict` refuse, elle fait importer l'issue MALGRÉ le recouvrement
+# (« nouvelle tâche assumée »). Le gate la lit AVANT le verdict. À ne pas
+# confondre avec `kanban`, qui exclut l'issue (défaut mesuré de l'ancien texte).
+IMPORT_OVERRIDE_LABEL = "pj-import"
+IMPORT_OVERRIDE_LABEL_COLOR = "0e8a16"
 MIRROR_LABEL_COLOR = "1d76db"
 TRIAGE_LABEL_COLOR = "d93f0b"
 BOT_GRACE_SECONDS = int(os.environ.get("BOT_GRACE_SECONDS", "600"))  # issues plus jeunes -> réservées au bot gh-triage
@@ -104,6 +117,17 @@ def flush_logs() -> None:
 
 _REF_RE = re.compile(r"(?<!#)#(\d+)\b")
 _URL_RE = re.compile(r"https?://\S+")
+# La ligne d'import que `pull()` ajoute à la carte racine : seul ancrage fiable
+# du numéro d'issue d'un graphe (le corps d'une carte peut citer n'importe quoi).
+_IMPORT_URL_RE = re.compile(r"/issues/(\d+)")
+# La ligne d'import que `pull()` écrit lui-même — préfixe EXACT, en tête de ligne.
+# C'est le seul ancrage du numéro d'issue d'une carte racine : un corps de carte
+# cite n'importe quoi (une autre issue en prose, une URL en exemple, le gabarit
+# `Issue GitHub : …` du t6). Ancrer sur la LIGNE, jamais sur le premier `/issues/<n>`.
+_IMPORT_LINE_PREFIX = "Importé depuis"
+_IMPORT_LINE_RE = re.compile(r"^[ \t]*%s\b" % re.escape(_IMPORT_LINE_PREFIX))
+# Titre du gabarit de graphe : « t1 worktree », « t3b doc-cadrage #5 », « t6 submitted #2 ».
+_GRAPH_TITLE_RE = re.compile(r"^t\d+[a-z]?\b")
 _STOPWORDS = {
     "le", "la", "les", "des", "de", "du", "un", "une", "et", "ou", "a", "au", "aux",
     "en", "pour", "sur", "par", "avec", "dans", "ce", "cette", "ces", "son", "sa",
@@ -135,14 +159,51 @@ def title_overlap(a, b) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+def _parent_number(issue: dict, ctx: dict) -> int | None:
+    """Numéro du parent d'une issue, lu d'où il est RÉELLEMENT disponible.
+
+    Deux sources, dans cet ordre :
+      1. `ctx['parents']` — la table pré-alimentée par l'appelant (une seule passe
+         réseau, cf. `coverage_context()`) ;
+      2. le repli sur `issue['parent']` — `gh issue list --json …,parent` rend
+         `{"number": N, …}`, un DICT, pas un entier. Le lire comme un int donne
+         `None` et l'exemption du parent est SILENCIEUSEMENT perdue (mesuré).
+    """
+    parents = ctx.get("parents")
+    if isinstance(parents, dict):
+        p = parents.get(int(issue.get("number") or 0))
+        if p is not None:
+            return int(p["number"]) if isinstance(p, dict) else int(p)
+    raw = issue.get("parent")
+    if isinstance(raw, dict):
+        return int(raw["number"]) if raw.get("number") else None
+    if raw:
+        return int(raw)
+    return None
+
+
 def coverage_verdict(issue: dict, ctx: dict) -> dict:
     """Cette issue recouvre-t-elle du travail en vol ? (verdict + raison).
 
-    ctx = {open_issues: {n}, open_pr_issues: {n}, graph_issues: {n}, titles: {n: str}}
+    ctx = {open_issues: {n}, open_pr_issues: {n}, graph_issues: {n}, titles: {n: str},
+           parents: {n: parent|None}}
+
+    L'exemption de l'enfant de décision est une **soustraction**, jamais un
+    court-circuit : `overlaps = (refs | hits_titre) - {parent} - {self}`, bloqué si
+    le reste est non vide. « parent ⇒ blocked=False » laisserait passer une enfant
+    qui cite son parent ET une autre issue en vol.
     """
     n = int(issue.get("number") or 0)
     in_flight = set(ctx.get("open_pr_issues") or set()) | set(ctx.get("graph_issues") or set())
-    in_flight.discard(n)                      # une issue ne se recouvre pas elle-même
+    parent = _parent_number(issue, ctx)
+    # Soustraction AVANT toute passe (références ET titres) : l'exemption du parent
+    # ne doit pas seulement écarter la référence textuelle, elle doit aussi empêcher
+    # la passe de recouvrement de TITRE de le réintroduire (une enfant de décision
+    # porte « Décision — carte … », un parent un titre quelconque : le garde-fou
+    # reste, mais l'ordre est explicite).
+    exempt = {n} | ({parent} if parent else set())
+    in_flight -= exempt
+    self_refs = exempt
 
     overlaps = sorted(issue_refs(issue.get("body")) & in_flight)
 
@@ -152,7 +213,7 @@ def coverage_verdict(issue: dict, ctx: dict) -> dict:
     for other in sorted(in_flight - set(overlaps)):
         if title_overlap(tokens, title_tokens(titles.get(other))) >= TITLE_OVERLAP_THRESHOLD:
             overlaps.append(other)
-    overlaps = sorted(set(overlaps))
+    overlaps = sorted(set(overlaps) - self_refs)
 
     if not overlaps:
         return {"blocked": False, "overlaps": [], "reason": ""}
@@ -171,15 +232,38 @@ def closes_line(issue_number: int) -> str:
     return f"Closes #{int(issue_number)}"
 
 
-def ensure_mirror_label() -> None:
-    """Crée le label miroir s'il n'existe pas (idempotent)."""
+def ensure_label(name: str, color: str, description: str) -> None:
+    """Crée un label s'il n'existe pas (idempotent)."""
     r = subprocess.run(
-        [GH_BIN, "label", "create", MIRROR_LABEL, "--repo", GH_REPO,
-         "--color", MIRROR_LABEL_COLOR,
-         "--description", "Issue miroir d'une carte kanban Hermes"],
+        [GH_BIN, "label", "create", name, "--repo", GH_REPO,
+         "--color", color, "--description", description],
         capture_output=True, text=True)
     if r.returncode != 0 and "already exists" not in r.stderr:
-        raise RuntimeError(f"gh label create {MIRROR_LABEL}\n{r.stderr.strip()}")
+        # C2 — l'échec est BRUYANT : le nom du label ET le stderr de `gh` tracés,
+        # puis l'exception remonte (jamais avalée) : le geste proposé par la trappe
+        # ne doit jamais être une promesse en l'air.
+        log(f"  ⛔ création du label '{name}' échouée : {(r.stderr or '').strip()[:200]}")
+        raise RuntimeError(f"gh label create {name}\n{r.stderr.strip()}")
+
+
+def ensure_mirror_label() -> None:
+    """Crée le label miroir s'il n'existe pas (idempotent)."""
+    ensure_label(MIRROR_LABEL, MIRROR_LABEL_COLOR,
+                 "Issue miroir d'une carte kanban Hermes")
+
+
+def ensure_import_override_label() -> None:
+    """Crée le label d'échappatoire du gate s'il n'existe pas (idempotent).
+
+    Nécessaire pour que la trappe ne mente pas : le texte corrigé propose de
+    « poser le label `pj-import` », or `gh issue edit --add-label` sur un label
+    INEXISTANT échoue (« could not add label: 'pj-import' not found ») et
+    `gh issue create --label <inconnu>` ne crée rien. Mesuré : `pj-import` est
+    absent de la liste des labels du dépôt — nommer une échappatoire inapplicable
+    reproduirait le défaut d'origine sous un autre nom.
+    """
+    ensure_label(IMPORT_OVERRIDE_LABEL, IMPORT_OVERRIDE_LABEL_COLOR,
+                 "Import forcé malgré le gate de couverture (décision humaine)")
 
 
 def sh(cmd: list[str]) -> str:
@@ -201,8 +285,13 @@ def kanban(*args: str) -> str:
 # ---------------------------------------------------------------- pull
 
 def list_open_issues() -> list[dict]:
+    """Issues ouvertes, `parent` INCLUS.
+
+    `parent` doit être demandé ici et pas dans une passe séparée : c'est le même
+    appel réseau, et une passe supplémentaire par issue serait payée à chaque tick.
+    """
     out = gh("issue", "list", "--repo", GH_REPO, "--state", "open",
-             "--json", "number,title,body,url,labels,createdAt")
+             "--json", "number,title,body,url,labels,createdAt,parent")
     return json.loads(out) or []
 
 
@@ -233,18 +322,28 @@ def issues_with_open_pr() -> set:
 def issues_with_graph() -> set:
     """Numéros d'issues ayant DÉJÀ un graphe déployé sur le board.
 
-    Détection par les cartes : la racine d'un graphe porte la ligne
-    « Importé depuis .../issues/<n> », ou à défaut un titre « #<n> ».
+    ANCRAGE STRICT — deux sources seulement, jamais les `#N` libres du corps :
+      (a) la ligne d'import que `pull()` ajoute à la carte racine,
+          « Importé depuis …/issues/<n> » ;
+      (b) le titre du gabarit de graphe, « t<n> … #N ».
+    La version naïve ramassait TOUS les `#N` cités par une carte `t1…t6` : une
+    carte `t6` parlant de « la PR #7 de <autre repo> » inscrivait un numéro
+    d'issue INEXISTANT dans la liste des graphes (mesuré : [1, 2, 4, 5, 7] alors
+    que `gh issue view 7` répond « Could not resolve »), et une future #7 de ce
+    dépôt aurait été refusée à l'import sur un fantôme.
     """
     tasks = json.loads(kanban("list", "--json") or "[]")
     found = set()
     for t in tasks:
-        if t.get("title", "").startswith(("t1 ", "t2 ", "t3 ", "t4 ", "t5 ", "t3b", "t6 ")):
-            for m in re.finditer(r"#(\d+)", str(t.get("body") or "") + str(t.get("title") or "")):
+        body = str(t.get("body") or "")
+        for line in body.splitlines():
+            if "Importé depuis" in line:
+                for m in _IMPORT_URL_RE.finditer(line):
+                    found.add(int(m.group(1)))
+        title = str(t.get("title") or "").strip()
+        if _GRAPH_TITLE_RE.match(title):
+            for m in re.finditer(r"#(\d+)", title):
                 found.add(int(m.group(1)))
-        body = t.get("body") or ""
-        for m in re.finditer(r"/issues/(\d+)", body):
-            found.add(int(m.group(1)))
     return found
 
 
@@ -253,12 +352,35 @@ def open_issue_titles() -> dict:
     return {int(i["number"]): i.get("title") or "" for i in list_open_issues()}
 
 
-def coverage_context(titles: dict) -> dict:
-    """Contexte du gate de couverture (une passe réseau, réutilisable)."""
+def issue_parents(issues: list[dict]) -> dict:
+    """{numéro: numéro du parent | None} — lu depuis la MÊME liste d'issues.
+
+    Aucune passe réseau supplémentaire : `list_open_issues()` demande déjà `parent`.
+    """
+    parents = {}
+    for i in issues:
+        raw = i.get("parent")
+        if isinstance(raw, dict):
+            parents[int(i["number"])] = int(raw["number"]) if raw.get("number") else None
+        elif raw:
+            parents[int(i["number"])] = int(raw)
+        else:
+            parents[int(i["number"])] = None
+    return parents
+
+
+def coverage_context(titles: dict, issues: list[dict] | None = None) -> dict:
+    """Contexte du gate de couverture (une passe réseau, réutilisable).
+
+    `issues` est la liste DÉJÀ chargée par l'appelant : la passer évite un second
+    `gh issue list` et permet d'en dériver `parents` sans appel supplémentaire.
+    """
     ctx = {"open_pr_issues": issues_with_open_pr(),
            "graph_issues": issues_with_graph(),
            "titles": titles}
     ctx["open_issues"] = set(titles)
+    if issues is not None:
+        ctx["parents"] = issue_parents(issues)
     return ctx
 
 
@@ -286,7 +408,7 @@ def _flag_covered_issue(issue: dict, verdict: dict) -> None:
         f"**Décider :**\n"
         f"1. **Rattacher** au travail en vol ({refs}) — commenter ici la décision, "
         f"le pipeline poursuivra sur l'issue existante ;\n"
-        f"2. **Nouvelle tâche assumée** — poser le label `{MIRROR_LABEL}` sur cette "
+        f"2. **Nouvelle tâche assumée** — poser le label `{IMPORT_OVERRIDE_LABEL}` sur cette "
         f"issue ; le pont l'importera au tick suivant.\n\n"
         f"Rien n'est lancé tant que cette décision n'est pas prise."
     )
@@ -325,7 +447,10 @@ def pull() -> None:
     to_import = []
     for i in issues:
         labels = {l.get("name") for l in (i.get("labels") or [])}
-        if MIRROR_LABEL in labels or TRIAGE_LABEL in labels:
+        # `decision` = objet de décision (l'issue enfant d'une carte bloquée) :
+        # ce n'est PAS une tâche, son import déclencherait un graphe complet sous
+        # une carte de décision. Écarté par le même prédicat, AVANT le gate.
+        if MIRROR_LABEL in labels or TRIAGE_LABEL in labels or DECISION_LABEL in labels:
             continue
         from datetime import datetime, timezone
         created_at = i.get("createdAt") or ""
@@ -344,26 +469,56 @@ def pull() -> None:
     # RENFO 1 — gate de couverture : une issue qui recouvre du travail en vol ne
     # lance PAS un nouveau graphe. On la signale et on la laisse en attente de
     # décision humaine (le label miroir n'est pas posé, donc elle reste visible).
+    covered = []
     if to_import:
         try:
             titles = {int(i["number"]): i.get("title") or "" for i in issues}
-            ctx = coverage_context(titles)
+            ctx = coverage_context(titles, issues)
             kept, covered = [], []
             for i in to_import:
+                labels = {l.get("name") for l in (i.get("labels") or [])}
+                if IMPORT_OVERRIDE_LABEL in labels:
+                    # ÉCHAPPATOIRE RÉELLE : l'humain a assumé une nouvelle tâche.
+                    # Le gate la RESPECTE — on le lit AVANT le verdict, sinon la
+                    # trappe serait un mensonge autrement formulé (défaut mesuré).
+                    log(f"  ↷ issue #{i['number']} importée malgré le gate "
+                        f"(label '{IMPORT_OVERRIDE_LABEL}' posé à la main)")
+                    kept.append((i, {"blocked": False, "overlaps": [], "reason": ""}))
+                    continue
                 v = coverage_verdict(i, ctx)
                 (covered if v["blocked"] else kept).append((i, v))
+            to_import = [i for i, _ in kept]
+        except Exception as e:
+            log(f"  gate de couverture indisponible ({type(e).__name__}: {e}) — pull sans gate")
+            covered = []        # rien n'a été tranché sur ce tick : aucune trappe à poster
+
+    # slice 2b — ORDRE (C1) : le label d'échappatoire est assuré AVANT le premier
+    # commentaire de trappe du tick, et INDÉPENDAMMENT de `to_import`. La trappe
+    # propose « poser le label `pj-import` » : si ce label n'existe pas, le geste est
+    # inexécutable (`could not add label: 'pj-import' not found`). Mesuré : quand la
+    # SEULE candidate du tick est couverte, `to_import` est vidé par le gate (L491),
+    # donc l'ancien garde `if to_import and not DRY_RUN:` ne créait jamais le label
+    # exactement dans le tick où la trappe parle.
+    # Cas (a) : une trappe va être postée. Cas (b) : une issue sera importée.
+    # Un seul appel de création d'échappatoire par tick (idempotent côté gh).
+    if not DRY_RUN and (covered or to_import):
+        if to_import:
+            ensure_mirror_label()
+        ensure_import_override_label()
+
+    if covered:
+        try:
             for i, v in covered:
                 log(f"  ⛔ issue #{i['number']} NON importée — {v['reason']}. "
                     f"Décider : rattacher à {', '.join('#'+str(o) for o in v['overlaps'])} "
                     f"(commenter l'issue) ou assumer une nouvelle tâche "
-                    f"(poser le label '{MIRROR_LABEL}' puis laisser le pont passer).")
+                    f"(poser le label '{IMPORT_OVERRIDE_LABEL}' puis laisser le pont passer).")
                 _flag_covered_issue(i, v)
-            to_import = [i for i, _ in kept]
         except Exception as e:
-            log(f"  gate de couverture indisponible ({type(e).__name__}: {e}) — pull sans gate")
-
-    if to_import and not DRY_RUN:
-        ensure_mirror_label()
+            # Le signalement du chevauchement ne doit pas emporter le tick (les imports
+            # du même tick restent valides) — mais il est TRACÉ, jamais muet. La
+            # création du label (C2) est HORS de ce `try` : elle ne peut pas être avalée.
+            log(f"  signalement du chevauchement indisponible ({type(e).__name__}: {e})")
 
     for issue in to_import:
         n = issue["number"]
@@ -405,15 +560,29 @@ def list_tasks() -> list[dict]:
 
 
 def issue_number_of(task: dict) -> int | None:
-    """Numéro d'issue GitHub lié à une carte.
+    """Numéro d'issue GitHub lié à une carte — ANCRÉ sur la ligne d'import.
 
-    Le champ idempotency_key n'est pas exposé dans l'API JSON kanban :
-    on déduit le numéro depuis l'URL d'import que le pull a ajoutée au
-    body ('Importé depuis https://github.com/<repo>/issues/<n>').
+    Le champ idempotency_key n'est pas exposé dans l'API JSON kanban : on déduit
+    le numéro de la ligne que `pull()` a ÉCRITE lui-même,
+    « Importé depuis https://github.com/<repo>/issues/<n> ».
+
+    La règle est ANCRÉE EN TÊTE DE LIGNE, jamais un `re.search` sur tout le body.
+    Mesuré sur le board réel : un body peut citer une AUTRE issue avant sa propre
+    ligne d'import (une issue en prose, le gabarit `Issue GitHub : …/issues/N` du
+    t6, un exemple de sous-chaîne `/issues/5` ⊂ `/issues/40`), et le premier
+    `/issues/<n>` du texte n'est alors pas le sien. Une carte `done` fermerait
+    l'issue d'un autre — c'est le défaut que ce correctif ferme.
+
+    Aucune ligne d'import ⇒ None : `push()` ignore la carte et ne ferme rien.
     """
-    m = re.search(r"github\.com/%s/issues/(\d+)" % re.escape(GH_REPO),
-                  task.get("body") or "")
-    return int(m.group(1)) if m else None
+    body = task.get("body") or ""
+    for line in body.splitlines():
+        if not _IMPORT_LINE_RE.match(line):
+            continue
+        m = re.search(r"github\.com/%s/issues/(\d+)" % re.escape(GH_REPO), line)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 def push() -> None:
@@ -540,11 +709,16 @@ def cmd_stats() -> None:
 # Sous-commande pour le bot gh-triage : liste les issues à driller.
 
 def cmd_new() -> None:
-    """Issues ouvertes sans label 'kanban' ni 'triage' — candidates au drill."""
+    """Issues ouvertes sans label 'kanban', 'triage' ni 'decision' — candidates au drill.
+
+    Un objet de décision (`decision`) n'est pas une tâche : le même prédicat que
+    `pull()` l'écarte, sinon le drill lui construirait un graphe complet.
+    """
     issues = list_open_issues()
     fresh = [i for i in issues
              if not issue_has_label(i, MIRROR_LABEL)
-             and not issue_has_label(i, TRIAGE_LABEL)]
+             and not issue_has_label(i, TRIAGE_LABEL)
+             and not issue_has_label(i, DECISION_LABEL)]
     print(json.dumps([{"number": i["number"], "title": i["title"],
                        "url": i["url"], "body": (i.get("body") or "")[:1500]}
                       for i in fresh], indent=1, ensure_ascii=False))
