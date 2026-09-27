@@ -215,3 +215,73 @@ Les prompts et commandes utilisent `{{...}}` :
   retrouvé depuis `ticket.issue_number` (déduit de la ligne « Importé
   depuis »). La notification est best-effort : si le thread est introuvable
   ou le post échoue, le pipeline continue sans casser.
+
+## Câblage `/ok` `pj_decision_watch.py`
+
+**Pourquoi.** Les slices 4 et 5 de l'issue #5 ont livré le **core pur** de décision
+(`pipeline/pj_decision.py`) et **l'émetteur** des deux notifications
+(`pipeline/pj_notify.py`). Les deux notes de composant consignent la même asymétrie :
+« aucun consommateur de production n'existe — `grep -rn 'pj_decision'` hors module et
+hors `tests/` → 0 hit ; le câblage relève de la slice post-#4 ». Ce runner **est** ce
+câblage : sans lui, `/ok` est une grammaire que personne ne lit.
+
+**Cycle d'un tick** (déterministe, 0 LLM) :
+
+1. lister les **enfants de décision** ouverts du dépôt (label `decision`) ;
+2. pour chaque enfant, lire ses commentaires et la carte qu'il désigne par sa ligne
+   canonique `carte: <board>/<task_id>` ;
+3. un commentaire dont le **premier élément** est `/ok` devient une décision
+   (`pj_decision.decision_from_comment`) ;
+4. `unblock` → `kanban comment` + `kanban unblock` sur la carte, puis
+   `pj_notify.notify_decision` (enfant notifié **puis** fermé, parent notifié,
+   **jamais** fermé) ;
+5. `comment` (la carte n'était plus bloquée) → la décision est **tracée sur la carte**,
+   sans notifier un déblocage qui n'a pas eu lieu ;
+6. `ignore` → rien (jeton cité au milieu d'une phrase, commentaire déjà consommé,
+   jeton antérieur à un re-blocage).
+
+**Le câblage ne décide rien.** La grammaire vit dans `pj_decision`, le texte des
+notifications dans `pj_notify`. Ce runner ne porte que les **effets** (GitHub, kanban,
+Discord). C'est ce découpage qui le rend testable hors ligne, avec des seams.
+
+| variable | statut | défaut |
+|---|---|---|
+| `PJ_WATCH_ORG` | **requise** | — (organisation GitHub) |
+| `PJ_WATCH_REPOS` | **requise** | — (dépôts, séparés par des virgules) |
+| `PJ_WATCH_BOARD` | optionnelle | — (board de secours) |
+| `PJ_WATCH_STATE_DIR` | optionnelle | `$HOME/.hermes/state` |
+| `PJ_WATCH_GH_BIN` | optionnelle | résolution `shutil.which` + candidats vérifiés |
+| `PJ_WATCH_HERMES_BIN` | optionnelle | résolution `shutil.which` + candidats vérifiés |
+
+Comme `pj_escalate`, **une requise absente ou VIDE refuse le tick bruyamment**
+(`ConfigError`, code de sortie `2`, aucune écriture d'état) : une valeur vide n'est
+jamais un identifiant, et un tick fantôme serait pire qu'un tick refusé.
+
+**État inter-ticks** : `pj_decision_watch_<repo>.json` (par dépôt) porte, par enfant,
+les ids de commentaires déjà consommés et les clés de décisions déjà notifiées. Un
+re-blocage produit un **nouveau** commentaire, donc une nouvelle clé : il redevient
+décidable sans jamais rejouer l'ancien.
+
+**Le label `decision` n'est pas décoratif** : c'est le même littéral que
+`DECISION_LABEL` du pont, qui **exempte de l'import** ce qu'il voit le porter. Un objet
+de décision n'est donc jamais transformé en tâche.
+
+**Réponse à une escalade** — l'humain, depuis GitHub, commente l'**issue enfant** :
+
+```
+/ok
+```
+
+Le jeton doit être le **premier élément** du commentaire. `/unblock` et `/drop` sont des
+grammaires **refusées** (deux grammaires = divergence garantie). Tout autre commentaire
+est une demande d'éclaircissement : il ne débloque rien.
+
+**Usage** :
+
+```
+pj_decision_watch.py [--dry-run] [--verbose] [--repo <repo>]
+```
+
+`--dry-run` n'écrit rien (ni kanban, ni GitHub) ; `--verbose` montre chaque commentaire
+et l'effet calculé.
+
