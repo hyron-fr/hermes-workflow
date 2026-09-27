@@ -145,7 +145,7 @@ script et la ligne qui la relit.</div>
 <tr><td class='k'>6</td><td>Skill du pont GitHub↔kanban + ses deux références<br><code>skill-gh-kanban-bridge</code></td><td class='n'>3</td><td class='n'>342</td><td class='n'>138</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>7</td><td>Skills de pipeline + skill de gate<br><code>skills-pipelines-gate</code></td><td class='n'>3</td><td class='n'>225</td><td class='n'>92</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>8</td><td>Skill d'orchestration — le plus gros fichier du dépôt<br><code>skill-orchestration</code></td><td class='n'>1</td><td class='n'>542</td><td class='n'>360</td><td><b>exception Small assumée : 1 fichier, 1 domaine, 1 journée d’agent</b></td></tr>
-<tr><td class='k'>9</td><td>Références du vault + README du pipeline<br><code>docs-refs-pipeline-readme</code></td><td class='n'>4</td><td class='n'>389</td><td class='n'>161</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>9</td><td>Références du vault + README du pipeline<br><code>docs-refs-pipeline-readme</code></td><td class='n'>4</td><td class='n'>503</td><td class='n'>219</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>10</td><td>Skill du pipeline pj<br><code>skill-pj-pipeline</code></td><td class='n'>1</td><td class='n'>317</td><td class='n'>181</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>11</td><td>Référence du pipeline d'issue — le plus dense en contrats<br><code>ref-issue-pipeline</code></td><td class='n'>1</td><td class='n'>289</td><td class='n'>171</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
   <tr><td class="k">—</td><td><b>corpus de traduction</b></td>
@@ -339,12 +339,12 @@ rendu PNG par <code>chromium headless_shell</code>.</footer>
           "accented_lines": 51
         },
         "pipeline/README.md": {
-          "lines": 103,
-          "accented_lines": 39
+          "lines": 217,
+          "accented_lines": 97
         }
       },
-      "lines": 389,
-      "accented_lines": 161
+      "lines": 503,
+      "accented_lines": 219
     },
     {
       "k": 10,
@@ -442,7 +442,21 @@ rendu PNG par <code>chromium headless_shell</code>.</footer>
       ],
       "not_changed": "the measured corpus totals (20 files / 3052 lines / 1559 accented lines) — no corpus .md was touched",
       "ratified_status": "the plate is no longer byte-identical to the artifact ratified at gate t5; the human must judge THIS rendering"
-    }
+    },
+    "amendments": [
+      {
+        "date": "2026-09-26",
+        "by": "pj-dev (card t_4cf79a8b, human go 26/09 point 3b: pj-dev is owner of the plate-ledger)",
+        "cause": "PR #8 merged 2026-09-26 (issue #4: pj_escalate/pj_publish docs, commits ba44fa8/3c663cd) — origin/dev:pipeline/README.md grew from 103 to 217 lines (97 accented, skeleton 16 headings / 6 fences / 2 tables)",
+        "changed": [
+          "slice 9 register: pipeline/README.md 103/39 -> 217/97",
+          "slice 9 totals: 389/161 -> 503/219 (the other 3 files of the slice are unchanged)",
+          "§4 prose row slice 9: 389/161 -> 503/219"
+        ],
+        "not_changed": "the seal commit e4da869d8e and its blobs (git blob 430d0375..., content sha256 958f7c61...) — this amendment is a dated entry in the LIVING ledger, the seal stays frozen at e4da869d8e",
+        "dated_tension": "the plate bench was re-architected on 2026-09-26 (t_887e9508, commit 9c4ad14, ~6h AFTER go 3b) to judge the FROZEN seal: while the branch is ahead of the seal it requires the working-tree plate to stay byte-identical to the seal (test_nominal_la_planche_et_le_script_mesures_sont_ceux_du_commit + test_limite_le_verdict_sur_l_arbre_vivant_suit_la_datation). This dated amendment — authorized by the newer human go 3b — therefore trips those two integrity tests by design until the seal is re-issued. Reported to pj-master, not silently absorbed."
+      }
+    ]
   }
 }
 </script>
