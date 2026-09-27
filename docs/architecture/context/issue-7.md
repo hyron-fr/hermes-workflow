@@ -33,6 +33,14 @@ rampe de dégradé, pas un secret. La « livraison » attendue est une
 **restauration d'asset**, prouvée par un contrôle rejouable, pas un changement
 de logique.
 
+**Périmètre tranché (décision humaine 1a, t3, 2026-09-20T21:25Z)** : la branche
+de #7 uniquement — `bridge/mermaid.min.js` depuis `dev`. `assets/mermaid.min.js`
+(lignée `main`) et les 3 branches en vol (`wt/issue-2/4/5-…`) sont
+**explicitement hors-scope** (voir « Hors-scope » ci-dessous). Une PR vers
+`dev` ne corrige qu'un chemin, et c'est assumé. Le rebase de `dev` sur `main`
+est une **recommandation d'architecture de la room**, pas une décision de 1a :
+il n'est pas porté par #7.
+
 ## Croisement infrastructure / fonctionnel / code
 
 ### Infrastructure (frontières traversées)
@@ -49,10 +57,11 @@ et le consommateur est un script de rendu hors-ligne.
   L29 `CHANNEL_ID = "${DISCORD_ID}"`, `skills/gh-kanban-bridge/scripts/*.py`) ;
   c'est **uniquement** son application à un littéral JS de bibliothèque qui est
   fautive.
-- **Git** — deux copies versionnées divergent déjà : `bridge/mermaid.min.js`
+- **Git** — deux copies versionnées divergent : `bridge/mermaid.min.js`
   (branche `dev`) et `assets/mermaid.min.js` (branche `main`, `origin/main`).
   Les **deux** portent le placeholder et échouent `node --check` (mesuré rc=1
-  sur chacune). La copie **saine** est hors dépôt :
+  sur chacune). **Seule la première est dans le périmètre de #7** (décision
+  1a). La copie **saine** est hors dépôt :
   `/home/elix/hermes-experiment/bridge/mermaid.min.js` (3 sites numériques
   17-19 chiffres, 0 placeholder, `node --check` rc=0).
 
@@ -109,9 +118,12 @@ node --check bridge/mermaid.min.js          # rc=0 attendu
 cmp bridge/mermaid.min.js <copie saine>     # identité, ou écart justifié
 ```
 
-La doc ci-présente ne décrit que ce qui existe et est mesuré : deux copies
-versionnées cassées, une copie saine hors-dépôt, un consommateur. Elle ne
-spécule sur aucun composant futur.
+La doc ci-présente ne décrit que ce qui existe et est mesuré. La preuve
+réellement mise en œuvre va **au-delà** de `node --check` + `cmp` : le banc
+[[ADR-0001-identite-asset-et-preuve-sans-oracle-externe]] prouve l'identité de
+l'asset par un **invariant dérivable** (census des littéraux numériques + rampe
+à `1/6` + sha256 amont), qui refuse aussi la récidive là où `node --check` seul
+ne voit rien.
 
 ## Lecture DDD
 
@@ -131,12 +143,13 @@ il n'y a pas de fonction à tester, seulement un fichier à valider. Le contrat
 rejouable à figer est le couple :
 
 1. `node --check` sur la copie versionnée → `rc=0` (parse valide) ;
-2. `cmp` vs copie saine → identité (ou écart documenté et justifié).
+2. identité d'octets vs artefact amont (`sha256` figé) → égalité.
 
 Ce couple est le **RED/GREEN** de l'issue : tant que `node --check` sort `rc=1`,
-l'issue n'est pas résolue. Un garde-fou post-correctif pertinent (à proposer,
-hors périmètre de l'issue) serait un contrôle d'intégrité au versionnement qui
-détecte tout `${DISCORD_ID}` dans un fichier `.js` vendu.
+l'issue n'est pas résolue. Le banc `tests/test_asset_mermaid_integrity.py`
+(livré par la carte test de la slice) est le garde-fou post-correctif qui
+détecte tout `${DISCORD_ID}` **et** tout littéral approximatif dans le blob
+versionné.
 
 ## Lecture hexagonale
 
@@ -150,22 +163,45 @@ aucune décision nouvelle n'y est déplacée.
 ## Composants impactés par l'issue #7
 
 - `bridge/mermaid.min.js` (branche `dev`) — **à restaurer** (copie cassée) ;
-- `assets/mermaid.min.js` (branche `main`) — **à restaurer** (copie cassée,
-  même défaut) ;
+  seul chemin dans le périmètre de #7 ;
 - `skills/gh-kanban-bridge/scripts/mermaid_render.py` — **exercé** (consommateur),
   non modifié ; porteur de la divergence de chemin `dev` vs `main` ;
 - copie saine hors-dépôt `/home/elix/hermes-experiment/bridge/mermaid.min.js` —
-  **source de vérité** pour `cmp`.
+  **source de vérité** pour l'identité d'octets.
+
+## Garde-fou cause racine
+
+Exclure `mermaid.min.js` — et plus généralement tout **asset vendu minifié** —
+de toute passe de sanitisation de secrets. Règle : un bundle minifié ne contient
+pas de secrets, il contient des **littéraux numériques qui ressemblent à des
+snowflakes** ; la détection « littéral 17-19 chiffres ≈ identifiant Discord »
+est un faux positif sur ce type de fichier, et sa substitution casse la syntaxe
+sans être détectée par `node --check`. Ce garde-fou est codifié par l'[[ADR-0001-identite-asset-et-preuve-sans-oracle-externe]].
+
+## Hors-scope (décision 1a)
+
+- **`assets/mermaid.min.js` sur `origin/main`** (même blob cassé, commit
+  `39a2bf6`) : explicitement hors-scope (lignée `main`, `dev` est la branche
+  d'intégration) ; une PR vers `dev` ne corrige qu'un chemin, assumé. Le rebase
+  de `dev` sur `main` mérite son propre ticket.
+- **Les 3 branches en vol** (`wt/issue-2/4/5-…`) : hors-scope. Mesuré : #4/#5/#7
+  portent le blob cassé comme version de base sans le modifier ; une fusion sur
+  `dev` réparé garde le blob sain. Relève du banc, pas de cette slice.
+- **La copie runtime déployée** (`/home/elix/hermes-experiment/bridge/…`,
+  saine) : le correctif s'applique aux copies **versionnées** ; la répartition
+  vers les profils est un geste hors dépôt (action humaine).
+- **`HERMES_WORKFLOW` / `${HOME}` non substitués ailleurs** : autre classe de
+  défaut, autre ticket.
 
 ## Frontières traversées (résumé)
 
 ```
-sanitizer (hors dépôt, non tracké)            → faux positif
-  └─ bridge/mermaid.min.js  (dev, cassé)      → à restaurer
-  └─ assets/mermaid.min.js  (main, cassé)     → à restaurer
-copie saine (hermes-experiment)               → source de vérité (cmp)
+sanitizer (hors dépôt, non tracké)            → faux positif (cause racine)
+  └─ bridge/mermaid.min.js  (dev, cassé)      → à restaurer  ← périmètre #7
+  └─ assets/mermaid.min.js  (main, cassé)     → hors-scope (décision 1a)
+copie saine (hermes-experiment)               → source de vérité (identité d'octets)
   → mermaid_render.py (consommateur, inchangé) → rendu Mermaid → PNG → Discord
 ```
 
 Aucune frontière de contexte runtime n'est franchie ; le correctif est une
-restauration d'octets versionnée, prouvée par `node --check` + `cmp`.
+restauration d'octets versionnée, prouvée par un invariant dérivable ([[ADR-0001-identite-asset-et-preuve-sans-oracle-externe]]), pas par un chemin ni un `cmp`.
