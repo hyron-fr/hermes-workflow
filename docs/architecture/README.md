@@ -16,8 +16,11 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-1-verification-contract]] — Contrat de vérification de #1 (protocole C1..C6, provenance des 4 maillons, verdict de convergence).
 - [[issue-5]] — Interface de décision humaine pour les cartes bloquées (Discord + GitHub uniquement).
 - [[issue-4]] — Versionner pj_escalate.py (pipeline/) : garde-fou d'état d'issue + résolution de binaire hors PATH.
+- [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
 
 ## Décisions (ADR)
+
+- [[ADR-0001-identite-asset-et-preuve-sans-oracle-externe]] — l'identité d'un asset vendu se prouve par un invariant dérivable, jamais par un chemin, un `cmp` ni un hash d'artefact externe (issue #7).
 
 _(peuplé par la carte `doc-k` : chaque ADR sous `decisions/` doit être référencé ici, sinon `pj_docs_lint.py` le signale orphelin.)_
 
