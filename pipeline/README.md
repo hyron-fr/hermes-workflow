@@ -262,6 +262,19 @@ les ids de commentaires déjà consommés et les clés de décisions déjà noti
 re-blocage produit un **nouveau** commentaire, donc une nouvelle clé : il redevient
 décidable sans jamais rejouer l'ancien.
 
+**Les ids persistés sont des ENTIERS, et c'est la lecture qui le garantit.** Les
+commentaires sont lus par l'**API REST** (`gh api repos/<org>/<repo>/issues/<n>/comments
+--paginate --jq '.[] | {id, body, html_url, …}'`), jamais par `gh issue view --json
+comments` : avec `--json`, `gh` rend l'**id de node** (`IC_kwDO…`), une chaîne, que la
+persistance (`isinstance(x, int)`) rejette en silence — l'anti-rejeu ne mémorisait donc
+rien et le même `/ok` non débloquant était re-tracé à chaque tick. Mesuré en production
+le 2026-09-27 : ~300 commentaires de carte pour 2 décisions réelles, sur un cron `*/3`.
+Deux pièges du même endroit, tous deux mesurés : `--paginate` applique le filtre jq **par
+page**, sur le TABLEAU de la page (sans `.[] |`, `gh` sort « expected an object but got:
+array » et la lecture rend `[]`) ; et l'`html_url` ainsi remontée est l'ancre EXACTE que
+`pj_notify._anchor` cherche pour relier le parent au commentaire `/ok` (elle était
+toujours `None` tant que la lecture ne la fournissait pas).
+
 **Le label `decision` n'est pas décoratif** : c'est le même littéral que
 `DECISION_LABEL` du pont, qui **exempte de l'import** ce qu'il voit le porter. Un objet
 de décision n'est donc jamais transformé en tâche.

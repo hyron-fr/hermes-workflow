@@ -22,9 +22,10 @@ runner testable avec des seams, sans réseau ni board réel.
 CYCLE D'UN TICK (0 LLM, déterministe)
 -------------------------------------
 1. lister les **enfants de décision** ouverts du dépôt (label `decision`) ;
-2. pour chaque enfant : lire ses commentaires et les cartes qu'il désigne (ligne
-   canonique `carte: <board>/<task_id>`), puis calculer une décision par
-   commentaire via `pj_decision.decision_from_comment` ;
+2. pour chaque enfant : lire ses commentaires (API REST : l'id est un **entier**,
+   sans quoi l'anti-rejeu n'a rien à mémoriser, cf. `read_comments`) et les cartes
+   qu'il désigne (ligne canonique `carte: <board>/<task_id>`), puis calculer une
+   décision par commentaire via `pj_decision.decision_from_comment` ;
 3. `effect == "unblock"` → `kanban comment` + `kanban unblock` sur la carte
    désignée, puis `pj_notify.notify_decision` (enfant notifié PUIS fermé,
    parent notifié, jamais fermé) ;
@@ -92,6 +93,25 @@ DECISION_LABEL = "decision"
 # (elle était explicitement hors périmètre des slices 4 et 5).
 CARD_LINE_RE = re.compile(r"^[ \t]*carte[ \t]*:[ \t]*(?P<board>[A-Za-z0-9._-]+)[ \t]*/[ \t]*(?P<task>t_[0-9a-fA-F]+)[ \t]*$",
                           re.MULTILINE)
+
+# Champs lus par commentaire sur l'API REST (`repos/<org>/<repo>/issues/<n>/comments`).
+#
+# POURQUOI REST ET PAS `gh issue view --json comments` : avec `--json`, `gh` rend
+# l'**id de node** du commentaire (`IC_kwDO…`), une chaîne opaque. Or l'état
+# inter-ticks ne persiste que des entiers (`slot['seen']`), donc la comparaison
+# échouait à CHAQUE tick et le même `/ok` non débloquant était re-tracé
+# indéfiniment — mesuré en production le 2026-09-27 : ~300 commentaires de carte
+# pour 2 décisions réelles. L'API REST donne `id` entier, `created_at` ISO et
+# `html_url` (l'ancre EXACTE du commentaire, que `pj_notify._anchor` cherche et
+# qui était toujours `None` faute d'être lue). `--paginate` est obligatoire : un
+# fil de décision peut dépasser la page par défaut, et un commentaire manqué est
+# une décision perdue.
+REST_COMMENT_FIELDS = ("id,body,html_url,created_at,user,author_association")
+# `--paginate` applique le filtre jq **par page**, sur le TABLEAU de la page : d'où le
+# `.[] |` obligatoire (sans lui `gh` sort « expected an object but got: array » et
+# `read_comments` rend `[]` — un tick muet pour de mauvaises raisons, mesure faite).
+REST_COMMENT_JQ = (".[] | {id, body, url: .html_url, createdAt: .created_at, "
+                   "author: {login: .user.login}}")
 
 # Contrat de configuration : présence ET non-vacuité (même patron que pj_escalate).
 REQUIRED_VARS = ("PJ_WATCH_ORG",)
@@ -244,19 +264,61 @@ def list_decision_children(cfg: WatchConfig, repo: str, *, state: str = "open",
 
 
 def read_comments(cfg: WatchConfig, repo: str, number: int, *, runner=subprocess.run) -> list[dict]:
-    """Commentaires d'une issue (jamais d'exception : un doute rend `[]`)."""
+    """Commentaires d'une issue, par l'API REST (jamais d'exception : un doute rend `[]`).
+
+    L'id rendu est un **entier** (`_as_int` le garantit) : c'est lui que l'anti-rejeu
+    persiste et que la péremption compare. Le contrat de champs est épinglé par le banc
+    (`REST_COMMENT_FIELDS`) parce qu'un id devenu chaîne rendrait la dédup muette —
+    panne silencieuse qui a produit ~300 commentaires de carte pour 2 décisions.
+
+    `--jq` rend un objet JSON **par ligne** : une sortie vide est un fil sans
+    commentaire (cas normal), pas une erreur ; une ligne illisible est ignorée
+    ligne à ligne, jamais au prix du fil entier.
+    """
     if not cfg.gh_bin:
         return []
     try:
-        r = runner([cfg.gh_bin, "issue", "view", str(number), "--repo", f"{cfg.org}/{repo}",
-                    "--json", "comments"], capture_output=True, text=True, timeout=60)
-        if r.returncode != 0:
-            return []
-        data = json.loads(r.stdout or "{}")
+        r = runner([cfg.gh_bin, "api", f"repos/{cfg.org}/{repo}/issues/{number}/comments",
+                    "--paginate", "--jq", REST_COMMENT_JQ],
+                   capture_output=True, text=True, timeout=60)
     except Exception:
         return []
-    comments = data.get("comments") if isinstance(data, dict) else None
-    return comments if isinstance(comments, list) else []
+    if r.returncode != 0:
+        return []
+    out: list[dict] = []
+    for line in (r.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        cid = _as_int(obj.get("id"))
+        if cid is None:
+            # Un commentaire sans id entier est inexploitable : le faire passer
+            # ferait entrer un id que l'anti-rejeu ne saurait pas comparer.
+            continue
+        obj["id"] = cid
+        out.append(obj)
+    return out
+
+
+def _as_int(value):
+    """Entier, ou None si la valeur n'est pas un entier exploitable (`None`, `''`…).
+
+    Même contrat que `pj_decision._as_int` : un id numérique rendu en chaîne par une
+    API doit redevenir un entier, sinon `seen_comment_ids` ne matche jamais et la
+    décision est rejouée à chaque tick.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parent_of(child: dict) -> int | None:

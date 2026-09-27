@@ -75,9 +75,10 @@ class FakeRun:
         if "issue list" in joined:
             r.returncode = self.gh_rc
             r.stdout = json.dumps(self.issues)
-        elif "issue view" in joined and "comments" in joined:
+        elif " api " in joined and "/comments" in joined:
+            # REST : `gh` rend un objet JSON PAR LIGNE (cf. `read_comments`).
             r.returncode = self.gh_rc
-            r.stdout = json.dumps({"comments": self.comments})
+            r.stdout = "\n".join(json.dumps(c) for c in self.comments)
         elif "kanban" in joined:
             r.returncode = self.kanban_rc
             r.stdout = ""
@@ -324,8 +325,9 @@ class FakeProd:
             r.returncode, r.stderr = self.label_rc, self.label_err
         elif "issue list" in j:
             r.stdout = json.dumps(self.children)
-        elif "issue view" in j and "comments" in j:
-            r.stdout = json.dumps({"comments": self.comments})
+        elif " api " in j and "/comments" in j:
+            # REST : un objet JSON par ligne (cf. `read_comments`).
+            r.stdout = "\n".join(json.dumps(c) for c in self.comments)
         elif "issue create" in j:
             r.returncode, r.stdout = self.create_rc, self.create_out
             # Réalisme : un enfant créé au tick courant est VISIBLE des lectures
@@ -796,3 +798,112 @@ def test_idem_enfant_non_rattachee_reste_sans_parent(w, cfg):
     """ERREUR — un enfant sans `parent` lisible n'invente pas de ticket."""
     assert w._parent_of({"number": 1}) is None
     assert w._parent_of({"number": 1, "parent": {"number": 5}}) == 5
+
+
+def test_limite_id_rest_numerique_ne_rejoue_pas_le_commentaire(w, cfg, monkeypatch):
+    """LIMITE — un commentaire NON débloquant n'est tracé qu'UNE fois par carte.
+
+    Régression mesurée en production (2026-09-27) : la lecture des commentaires passait
+    par `gh issue view --json comments`, dont l'`id` est le **node id** (`IC_kwDO…`, une
+    chaîne). `slot['seen']` ne persiste que des entiers (`isinstance(x, int)`), donc la
+    comparaison échouait à CHAQUE tick : le même `/ok` — sur une carte déjà sortie de
+    `blocked` — était re-tracé toutes les 3 minutes, indéfiniment (~300 commentaires de
+    carte pour 2 décisions réelles). L'id doit donc entrer **entier** dans l'état, et le
+    tick suivant ne doit plus rien écrire.
+
+    Ce cas ne mord que si l'id est un entier : un id chaîne rend le second tick identique
+    au premier (il passe pour un nouveau commentaire).
+    """
+    _patch_status(w, monkeypatch, status="triage")      # carte plus bloquée : effet "comment"
+    cid = 5856303363                                    # id REST réel (entier, ~1e10)
+    run1 = FakeRun(comments=[_comment(cid=cid)])
+    st1 = w.watch_repo("hermes-workflow", cfg=cfg, runner=run1)
+    assert st1["commented"] and len(run1.kanban_calls("comment")) == 1
+
+    run2 = FakeRun(comments=[_comment(cid=cid)])
+    st2 = w.watch_repo("hermes-workflow", cfg=cfg, runner=run2)
+    assert st2["commented"] == [], "la décision déjà consommée ne se rejoue pas"
+    assert run2.kanban_calls("comment") == [], "le board ne reçoit pas un doublon"
+
+
+def test_limite_id_rest_numerique_est_persiste_dans_l_etat(w, cfg, monkeypatch):
+    """LIMITE — l'état inter-ticks porte l'id REST en ENTIER, pas une chaîne.
+
+    Le filtre de persistance (`isinstance(x, int)`) est ce qui rend l'anti-rejeu réel :
+    un id non entier est silencieusement jeté, et tout ce qui suit devient un doublon.
+    """
+    _patch_status(w, monkeypatch, status="triage")
+    cid = 5856303363
+    run = FakeRun(comments=[_comment(cid=cid)])
+    w.watch_repo("hermes-workflow", cfg=cfg, runner=run)
+    slot = json.loads(w.state_path(cfg, "hermes-workflow").read_text())[str(CHILD)]
+    assert slot["seen"] == [cid] and isinstance(slot["seen"][0], int)
+    assert w._as_int(str(cid)) == cid, "un id numérique en chaîne redevient un entier"
+
+
+def test_limite_un_id_non_numerique_est_ecarte(w, cfg):
+    """ERREUR — un commentaire sans id entier exploitable est écarté, pas retenu tel quel.
+
+    Rendre un id que l'anti-rejeu ne sait pas comparer ferait entrer un faux nouveau
+    commentaire à chaque tick : le même défaut, une couche plus bas.
+    """
+    class Run:
+        returncode = 0
+        stderr = ""
+
+        def __call__(self, *a, **k):
+            class R:
+                pass
+            r = R()
+            r.returncode, r.stderr = 0, ""
+            r.stdout = json.dumps({"id": "IC_kwDOUhYDj88AAAABXRAZAw", "body": "/ok"})
+            return r
+
+    assert w.read_comments(cfg, "hermes-workflow", CHILD, runner=Run()) == []
+
+
+def test_nominal_lecture_rest_rend_id_entier_url_et_auteur(w, cfg):
+    """NOMINAL — la lecture REST rend id entier + URL (l'ancre de `pj_notify`) + auteur.
+
+    L'URL n'est pas décorative : c'est elle que `pj_notify._anchor` cherche pour lier le
+    parent au commentaire `/ok` exact ; elle était toujours `None` tant que la lecture ne
+    la remontait pas.
+    """
+    class Run:
+        def __call__(self, *a, **k):
+            class R:
+                pass
+            r = R()
+            r.returncode, r.stderr = 0, ""
+            r.stdout = json.dumps({"id": 5856303363, "body": "/ok",
+                                   "url": "https://github.com/hyron-fr/hermes-workflow/issues/40"
+                                          "#issuecomment-5856303363",
+                                   "createdAt": "2026-09-27T13:31:59Z",
+                                   "author": {"login": "jeanbaptistepriez"}})
+            return r
+
+    got = w.read_comments(cfg, "hermes-workflow", CHILD, runner=Run())
+    assert len(got) == 1
+    assert got[0]["id"] == 5856303363 and isinstance(got[0]["id"], int)
+    assert got[0]["url"].endswith("#issuecomment-5856303363")
+    assert got[0]["author"]["login"] == "jeanbaptistepriez"
+
+
+def test_nominal_la_lecture_des_commentaires_passe_par_l_api_rest(w, cfg):
+    """NOMINAL — la lecture des commentaires passe par l'API REST paginée, pas `--json`.
+
+    Contrat de champ, pas de forme d'appel : c'est la SOURCE de l'id (REST ⇒ entier,
+    `--json` ⇒ node id chaîne) qui décide si l'anti-rejeu fonctionne. Le banc épingle
+    donc que la commande est bien l'API REST et qu'elle demande ces champs.
+    """
+    run = FakeRun(comments=[_comment()])
+    w.read_comments(cfg, "hermes-workflow", CHILD, runner=run)
+    appels = [c for c in run.appels if "gh api" in c or "/comments" in c]
+    assert appels, "la lecture doit interroger l'API REST des commentaires"
+    assert "/comments" in appels[0] and "--paginate" in appels[0]
+    assert "html_url" in w.REST_COMMENT_FIELDS, "l'ancre de notification vient de là"
+    # `--paginate` filtre chaque PAGE, qui est un tableau : sans `.[] |` gh sort
+    # « expected an object but got: array » et la lecture rend `[]` — un tick
+    # silencieusement vide, c'est-à-dire exactement le défaut qu'on répare.
+    assert w.REST_COMMENT_JQ.lstrip().startswith(".[] |"), \
+        "le filtre jq doit dérouler le tableau de la page"
