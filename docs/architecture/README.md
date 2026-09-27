@@ -16,6 +16,10 @@ Map of Content of the `docs/architecture/` vault. Every cadrage note
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 
+## Règles
+
+- [[declared-delta-rule]] — What the seal guard protects: the declared-delta rule (5 testable points).
+
 ## Components
 
 - [[pj-lang-lint]] — deterministic language gate for the English corpus.
