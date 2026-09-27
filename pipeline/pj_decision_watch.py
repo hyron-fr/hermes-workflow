@@ -74,6 +74,10 @@ KANBAN_ROOT = Path.home() / ".hermes" / "kanban" / "boards"
 # deux lecteurs, comme la ligne canonique.
 REOPEN_MARKER = "🔁 **Re-blocage**"
 
+# États d'issue GitHub tels que `gh` les rend. Seule une enfant FERMÉE peut être
+# rouverte : une enfant ouverte attend déjà sa décision.
+CLOSED_STATE = "CLOSED"
+
 # Préfixe de convention des boards du pipeline (FIGÉ, même règle que pj_escalate).
 BOARD_PREFIX = "pj-"
 
@@ -209,8 +213,9 @@ def _warn_once(msg: str, warned: set) -> None:
     print(f"[watch] ⚠️ {msg}")
 
 
-def list_decision_children(cfg: WatchConfig, repo: str, *, runner=subprocess.run) -> list[dict]:
-    """Enfants de décision OUVERTS du dépôt (label `decision`).
+def list_decision_children(cfg: WatchConfig, repo: str, *, state: str = "open",
+                           runner=subprocess.run) -> list[dict]:
+    """Enfants de décision du dépôt (label `decision`), `open` par défaut.
 
     Tri-state sur les doutes, même contrat que `pj_escalate.issue_is_closed` : un
     `gh` indisponible ou une lecture refusée rendent `[]` **et avertissent** — on
@@ -221,8 +226,8 @@ def list_decision_children(cfg: WatchConfig, repo: str, *, runner=subprocess.run
         return []
     try:
         r = runner([cfg.gh_bin, "issue", "list", "--repo", f"{cfg.org}/{repo}",
-                    "--label", DECISION_LABEL, "--state", "open",
-                    "--json", "number,title,body,url,parent"],
+                    "--label", DECISION_LABEL, "--state", state,
+                    "--json", "number,title,body,url,parent,state"],
                    capture_output=True, text=True, timeout=60)
     except Exception as exc:
         _warn_once(f"liste des enfants illisible : {type(exc).__name__} — surveillance /ok sautée", set())
@@ -309,18 +314,24 @@ def ensure_decision_label(cfg: WatchConfig, repo: str, *, runner=subprocess.run)
 
 
 def find_decision_child(cfg: WatchConfig, repo: str, parent: int, task_id: str, *,
-                        runner=subprocess.run) -> int | None:
-    """Numéro de l'enfant de décision EXISTANTE pour (parent, carte), ou None.
+                        runner=subprocess.run) -> dict | None:
+    """Enfant de décision EXISTANTE pour une carte : `{number, state}`, ou None.
 
-    « une enfant par carte, rouverte (jamais dupliquée) sur re-blocage » : on ne
-    peut donc pas créer à l'aveugle. La recherche lit la ligne canonique des
-    enfants ouverts — c'est la même grammaire que le consommateur, donc une
-    création et une relecture ne peuvent pas diverger.
+    Cherche parmi **tous** les états, pas seulement les ouvertes : c'est ce qui
+    distingue « l'enfant attend déjà une décision » (RIEN à faire) de « l'enfant a
+    été fermée par une décision, la carte a re-bloqué » (à rouvrir). Réduire la
+    recherche aux ouvertes rendait la réouverture indécidable — et faisait poster un
+    marqueur à chaque tick (mesuré en production).
+
+    La comparaison se fait sur la ligne canonique : même grammaire que le
+    consommateur, donc une création et une relecture ne peuvent pas diverger.
     """
-    for child in list_decision_children(cfg, repo, runner=runner):
+    for child in list_decision_children(cfg, repo, state="all", runner=runner):
         loc = canonical_card(child.get("body") or "")
         if loc and loc[1] == task_id:
-            return child.get("number") if isinstance(child.get("number"), int) else None
+            n = child.get("number")
+            return {"number": n, "state": (child.get("state") or "").upper(),
+                    "task": task_id} if isinstance(n, int) else None
     return None
 
 
@@ -389,17 +400,27 @@ def ensure_decision_child(cfg: WatchConfig, repo: str, *, parent: int, board: st
                           title: str, reason: str, runner=subprocess.run) -> dict:
     """Fait exister l'objet de décision d'une carte bloquée — UN par carte.
 
-    Trois issues possibles, toutes explicites : `created` (premier blocage),
-    `reopened` (re-blocage de la même carte), `failed` (raison nommée). Le module
-    n'invente pas de « succès » : un échec de création remonte comme tel, et
-    l'appelant décide de le rendre visible.
+    L'ÉTAT DE L'ENFANT est la clé d'idempotence — une seule source de vérité, côté
+    GitHub, partagée par tous les ticks. Trois issues, toutes explicites :
+
+    - **aucune enfant** → `created` (premier blocage) ;
+    - **enfant OUVERTE** → `waiting` : elle attend déjà une décision, on ne rouvre
+      RIEN et on ne poste AUCUN marqueur. C'est le cas nominal d'un tick répété ;
+    - **enfant FERMÉE** (une décision a été consommée) → `reopened` : la carte a
+      re-bloqué, on rouvre la MÊME enfant et on y poste le marqueur.
+
+    Un `event` de blocage dans la base n'est PAS une clé fiable : mesuré, des cartes
+    bloquées (`t_618df8a6`) n'ont aucun événement `blocked` enregistré — s'y fier les
+    re-signalait à chaque tick.
     """
     if not ensure_decision_label(cfg, repo, runner=runner):
         return {"child": None, "effect": "failed", "why": f"label {DECISION_LABEL} indisponible"}
     existing = find_decision_child(cfg, repo, parent, task_id, runner=runner)
     if existing is not None:
-        ok = reopen_decision_child(cfg, repo, existing, task_id, reason, runner=runner)
-        return {"child": existing, "effect": "reopened" if ok else "failed",
+        if existing["state"] != CLOSED_STATE:
+            return {"child": existing["number"], "effect": "waiting", "why": ""}
+        ok = reopen_decision_child(cfg, repo, existing["number"], task_id, reason, runner=runner)
+        return {"child": existing["number"], "effect": "reopened" if ok else "failed",
                 "why": "" if ok else "réouverture/marquage refusé"}
     number = create_decision_child(cfg, repo, parent, board, task_id, title, reason, runner=runner)
     if number is None:
@@ -531,6 +552,21 @@ def _block_reason(conn: sqlite3.Connection, task_id: str) -> str:
     return str(payload.get("reason") or payload.get("summary") or "").strip()
 
 
+def block_event_id(conn: sqlite3.Connection, task_id: str) -> int | None:
+    """Identifiant du DERNIER événement de blocage d'une carte, ou None.
+
+    C'est la clé d'idempotence de la réouverture : `task_events.id` est strictement
+    croissant, donc « le même blocage » est reconnaissable et un **nouveau** blocage
+    (nouvel id) seul justifie un nouveau marqueur. `pj_escalate` utilise exactement
+    cette clé pour sa propre dédup — même modèle, deux lecteurs.
+    """
+    kinds = ("blocked", "block_loop_detected")
+    q = ("SELECT id FROM task_events WHERE task_id = ? AND kind IN ("
+         + ",".join("?" * len(kinds)) + ") ORDER BY id DESC LIMIT 1")
+    row = conn.execute(q, (task_id, *kinds)).fetchone()
+    return int(row["id"]) if row else None
+
+
 def blocked_cards(cfg: WatchConfig, board: str | None = None) -> list[dict]:
     """Cartes bloquées du board, avec l'issue de leur ticket et le motif du blocage.
 
@@ -558,7 +594,8 @@ def blocked_cards(cfg: WatchConfig, board: str | None = None) -> list[dict]:
                 if issue is None:
                     continue
                 out.append({"board": board, "task_id": row["id"], "title": row["title"] or row["id"],
-                            "issue": issue, "reason": _block_reason(conn, row["id"])})
+                            "issue": issue, "reason": _block_reason(conn, row["id"]),
+                            "event": block_event_id(conn, row["id"])})
         finally:
             conn.close()
     except Exception:
@@ -619,7 +656,17 @@ def watch_repo(repo: str, *, cfg: WatchConfig, dry=False, verbose=False,
         notify_mod = _load_sibling_module("pj_notify")
 
     state = load_state(cfg, repo)
-    stats = {"repo": repo, "unblocked": [], "commented": [], "ignored": 0, "errors": []}
+    # `state` porte deux familles de clés : les numéros d'issue (enfants, anti-rejeu
+    # des jetons) et `__events__` (dédup de la PRODUCTION). La boucle ci-dessous
+    # écrirait `state["__events__"]` comme un enfant et écraserait la clé — on la
+    # garde donc de côté et on la repose avant la sauvegarde.
+    state.pop("__events__", None)      # ancienne clé de dédup, remplacée par l'état GitHub
+    # Forme STABLE : `children` est toujours présent, même vide. Un rapport dont la
+    # forme dépend du chemin (la clé n'apparaît que si l'on a produit) oblige chaque
+    # lecteur à se défendre par `.get()` — et un appelant qui l'oublie confond « rien
+    # produit » avec « clé absente ».
+    stats = {"repo": repo, "unblocked": [], "commented": [], "ignored": 0,
+             "errors": [], "children": []}
 
     # PHASE 1 — PRODUIRE. Chaque carte bloquée doit avoir SON objet de décision, sans
     # quoi le `/ok` de l'humain n'a nulle part où être écrit : c'est le maillon qui
@@ -631,13 +678,18 @@ def watch_repo(repo: str, *, cfg: WatchConfig, dry=False, verbose=False,
     # c'est-à-dire l'inverse de sa promesse.
     if cfg.board:
         for card in blocked_cards(cfg):
+            # L'idempotence est portée par l'ÉTAT DE L'ENFANT (créée/ouverte/fermée),
+            # pas par une mémoire locale : un tick répété voit « enfant ouverte » et
+            # ne poste rien. Une enfant ouverte qui attend sa décision n'est PAS un
+            # objet à signaler — c'est l'état normal jusqu'à ce que l'humain réponde.
             if dry:
                 existing = find_decision_child(cfg, repo, card["issue"], card["task_id"],
                                                runner=runner)
-                stats.setdefault("children", []).append(
-                    {"task": card["task_id"],
-                     "child": existing,
-                     "effect": "would_reopen" if existing else "would_create"})
+                effect = ("waiting" if existing and existing["state"] != CLOSED_STATE else
+                          "would_reopen" if existing else "would_create")
+                stats["children"].append({"task": card["task_id"],
+                                          "child": existing["number"] if existing else None,
+                                          "effect": effect})
                 continue
             res = ensure_decision_child(cfg, repo, parent=card["issue"], board=card["board"],
                                         task_id=card["task_id"], title=card["title"],
@@ -645,10 +697,9 @@ def watch_repo(repo: str, *, cfg: WatchConfig, dry=False, verbose=False,
             if res["effect"] == "failed":
                 stats["errors"].append({"task": card["task_id"], "why": res["why"],
                                         "parent": card["issue"]})
-            elif res["child"]:
-                stats.setdefault("children", []).append(
-                    {"task": card["task_id"], "child": res["child"], "effect": res["effect"]})
-
+            elif res["effect"] in ("created", "reopened"):
+                stats["children"].append({"task": card["task_id"], "child": res["child"],
+                                          "effect": res["effect"]})
     children = list_decision_children(cfg, repo, runner=runner)
     for child in children:
         number = child.get("number")

@@ -95,9 +95,9 @@ class FakeRun:
         return [c for c in self.appels if f"issue {verb} " in c]
 
 
-def _child(body=None, parent=PARENT, number=CHILD):
+def _child(body=None, parent=PARENT, number=CHILD, state="OPEN"):
     b = body if body is not None else f"Point à statuer.\n\ncarte: {BOARD}/{TASK}\n"
-    d = {"number": number, "title": f"décision carte {TASK}", "body": b,
+    d = {"number": number, "title": f"décision carte {TASK}", "body": b, "state": state,
          "url": f"https://github.com/hyron-fr/hermes-workflow/issues/{number}"}
     if parent is not None:
         d["parent"] = {"number": parent}
@@ -396,7 +396,7 @@ def test_production_reblocage_rouvre_la_meme_enfant_jamais_dupliquee(w, cfg):
     L'ordre importe : GitHub refuse `reopen` sur une issue ouverte ; et c'est le
     commentaire neuf qui porte le nouveau `last_reopen_comment_id`.
     """
-    run = FakeProd(children=[_child(body=f"carte: {BOARD}/{TASK}\n")])
+    run = FakeProd(children=[_child(body=f"carte: {BOARD}/{TASK}\n", state="CLOSED")])
     res = w.ensure_decision_child(cfg, "hermes-workflow", parent=PARENT, board=BOARD,
                                   task_id=TASK, title="titre", reason="re-blocage", runner=run)
     assert res["effect"] == "reopened" and res["child"] == CHILD
@@ -703,8 +703,96 @@ def test_production_dry_run_ne_cree_rien(w, cfg, monkeypatch):
     assert run.gh_comment_calls() == [], "le dry-run ne commente AUCUNE issue"
     assert st["children"] == [{"task": TASK, "child": None, "effect": "would_create"}]
 
-    # et sur un re-blocage, il ANNONCE la réouverture sans la faire
+    # une enfant OUVERTE qui attend déjà : le dry-run le DIT, et n'annonce rien à faire
     run2 = FakeProd(children=[_child(body=f"carte: {BOARD}/{TASK}\n")], comments=[])
     st2 = w.watch_repo("hermes-workflow", cfg=cfg, dry=True, runner=run2)
     assert run2.reopen_calls() == []
-    assert st2["children"] == [{"task": TASK, "child": CHILD, "effect": "would_reopen"}]
+    assert st2["children"] == [{"task": TASK, "child": CHILD, "effect": "waiting"}]
+
+    # une enfant FERMÉE avec la carte toujours bloquée : il ANNONCE la réouverture
+    run3 = FakeProd(children=[_child(body=f"carte: {BOARD}/{TASK}\n", state="CLOSED")],
+                    comments=[])
+    st3 = w.watch_repo("hermes-workflow", cfg=cfg, dry=True, runner=run3)
+    assert run3.reopen_calls() == [], "le dry-run ne rouvre rien"
+    assert st3["children"] == [{"task": TASK, "child": CHILD, "effect": "would_reopen"}]
+
+# ==================================== idempotence de la PRODUCTION (régressions) =====
+# Bug MESURÉ en production : le premier déploiement repostait un marqueur de re-blocage
+# à CHAQUE tick (4 doublons en 4 minutes sur #11/#12/#13) parce qu'il rouvrait une
+# enfant déjà OUVERTE. La clé est l'ÉTAT DE L'ENFANT (créée / ouverte / fermée), lu
+# côté GitHub — une seule source de vérité, partagée par tous les ticks.
+
+def _cards(task=TASK):
+    return [{"board": BOARD, "task_id": task, "title": "t", "issue": PARENT, "reason": "r"}]
+
+
+def test_idem_enfant_ouverte_ne_se_signale_pas_deux_fois(w, cfg, monkeypatch):
+    """LIMITE — enfant OUVERTE qui attend sa décision : le tick ne poste RIEN.
+
+    C'est la régression exacte observée en production. Elle est reprise par le
+    modèle : une enfant ouverte n'est pas un objet à signaler, c'est l'état normal
+    jusqu'à ce que l'humain réponde.
+    """
+    monkeypatch.setattr(w, "blocked_cards", lambda cfg, board=None: _cards())
+    open_child = _child(body=f"carte: {BOARD}/{TASK}\n")          # OPEN
+    run = FakeProd(children=[open_child])
+    st = w.watch_repo("hermes-workflow", cfg=cfg, runner=run)
+    assert st["children"] == [], "rien à signaler : l'enfant attend déjà"
+    assert run.reopen_calls() == [] and run.gh_comment_calls() == []
+    assert run.create_calls() == []
+
+
+def test_idem_aucun_marqueur_poste_deux_ticks_de_suite(w, cfg, monkeypatch):
+    """LIMITE — deux ticks consécutifs, enfant ouverte : aucun marqueur, jamais deux."""
+    monkeypatch.setattr(w, "blocked_cards", lambda cfg, board=None: _cards())
+    for i in (1, 2):
+        run = FakeProd(children=[_child(body=f"carte: {BOARD}/{TASK}\n")])
+        st = w.watch_repo("hermes-workflow", cfg=cfg, runner=run)
+        assert run.gh_comment_calls() == [], f"tick {i} : aucun marqueur"
+        assert st["children"] == []
+
+
+def test_idem_enfant_fermee_est_rouverte_une_fois(w, cfg, monkeypatch):
+    """LIMITE — enfant FERMÉE (décision consommée) + carte bloquée ⇒ rouverte, 1 seule fois."""
+    monkeypatch.setattr(w, "blocked_cards", lambda cfg, board=None: _cards())
+    closed_child = _child(body=f"carte: {BOARD}/{TASK}\n", state="CLOSED")
+    run = FakeProd(children=[closed_child])
+    st = w.watch_repo("hermes-workflow", cfg=cfg, runner=run)
+    assert [c["effect"] for c in st["children"]] == ["reopened"]
+    assert len(run.reopen_calls()) == 1
+    assert len(run.gh_comment_calls()) == 1, "le marqueur est posté une seule fois"
+    assert run.create_calls() == [], "jamais de doublon d'issue"
+
+
+def test_idem_lenfant_cree_est_reconnu_au_tick_suivant(w, cfg, monkeypatch):
+    """LIMITE — après création, le tick suivant lit l'enfant OUVERTE et se tait.
+
+    La boucle complète : premier tick `created`, second tick muet — c'est ce qui
+    rend l'idempotence vraie entre deux process distincts (le cron ne garde rien
+    en mémoire).
+    """
+    monkeypatch.setattr(w, "blocked_cards", lambda cfg, board=None: _cards())
+    run1 = FakeProd(children=[], create_out=f"https://github.com/hyron-fr/hermes-workflow/issues/{CHILD}\n")
+    st1 = w.watch_repo("hermes-workflow", cfg=cfg, runner=run1)
+    assert [c["effect"] for c in st1["children"]] == ["created"]
+    run2 = FakeProd(children=[_child(body=f"carte: {BOARD}/{TASK}\n")])   # devenue ouverte
+    st2 = w.watch_repo("hermes-workflow", cfg=cfg, runner=run2)
+    assert st2["children"] == [], "le tick suivant constate et se tait"
+    assert run2.gh_comment_calls() == []
+
+
+def test_idem_echec_de_creation_est_rapporte_et_reaessaye(w, cfg, monkeypatch):
+    """ERREUR — un échec de création est rapporté, et le tick suivant réessaie."""
+    monkeypatch.setattr(w, "blocked_cards", lambda cfg, board=None: _cards())
+    run = FakeProd(children=[], create_rc=1)
+    st = w.watch_repo("hermes-workflow", cfg=cfg, runner=run)
+    assert st["errors"] and st["children"] == []
+    run2 = FakeProd(children=[], create_out="https://github.com/hyron-fr/hermes-workflow/issues/9\n")
+    st2 = w.watch_repo("hermes-workflow", cfg=cfg, runner=run2)
+    assert [c["effect"] for c in st2["children"]] == ["created"], "il réessaie et réussit"
+
+
+def test_idem_enfant_non_rattachee_reste_sans_parent(w, cfg):
+    """ERREUR — un enfant sans `parent` lisible n'invente pas de ticket."""
+    assert w._parent_of({"number": 1}) is None
+    assert w._parent_of({"number": 1, "parent": {"number": 5}}) == 5
