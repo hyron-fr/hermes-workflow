@@ -50,6 +50,7 @@ Usage :
   pj_decision_watch.py [--dry-run] [--verbose] [--board B] [--repo R]
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -567,26 +568,55 @@ def blocked_cards(cfg: WatchConfig, board: str | None = None) -> list[dict]:
 
 # ---------------------------------------------------------------------------- tick ---
 
+def _load_sibling_module(name: str, *, extra_dirs=()) -> object:
+    """Charge `pj_decision` / `pj_notify` — les modules voisins du câblage.
+
+    La copie INSTALLÉE vit dans `~/.hermes/profiles/pj-master/scripts/`, où les
+    modules frères ne sont pas forcément présents : mesuré en environnement de cron,
+    un chargement strictement « à côté de moi » lève `FileNotFoundError` et le cron
+    meurt à chaque tick. On cherche donc dans l'ordre :
+      1. le répertoire du présent fichier (copie versionnée `pipeline/`) ;
+      2. `PJ_WATCH_MODULES_DIR` (déploiement où l'on publie les modules ensemble) ;
+      3. les voisins de la copie installée (même nom de fichier).
+    L'échec est BRUYANT et NOMME les chemins essayés : un tick qui ne trouverait pas
+    son core ne doit pas passer pour un tick sans rien à faire.
+    """
+    here = Path(__file__).resolve().parent
+    candidates = [here]
+    env_dir = os.environ.get("PJ_WATCH_MODULES_DIR")
+    if env_dir:
+        candidates.append(Path(os.path.expanduser(env_dir)))
+    candidates.extend(Path(os.path.expanduser(d)) for d in extra_dirs)
+    candidates.append(Path.home() / ".hermes" / "profiles" / "pj-master" / "scripts")
+    for d in candidates:
+        p = d / f"{name}.py"
+        if p.is_file():
+            spec = importlib.util.spec_from_file_location(name, str(p))
+            if spec is None or spec.loader is None:
+                continue
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+    raise ConfigError(
+        f"module {name}.py introuvable — chemins essayés : "
+        + ", ".join(str(d / f"{name}.py") for d in candidates)
+        + " (publier les modules avec pj_publish.py, ou poser PJ_WATCH_MODULES_DIR)")
+
+
 def watch_repo(repo: str, *, cfg: WatchConfig, dry=False, verbose=False,
                runner=subprocess.run, decision_mod=None, notify_mod=None,
                post_discord=None) -> dict:
-    """Un tick sur un dépôt : lire les `/ok`, appliquer, notifier.
+    """Un tick sur un dépôt : produire les objets de décision, lire les `/ok`, notifier.
 
     Les modules de décision et de notification sont injectés (défaut : les modules
-    versionnés du dépôt). C'est ce qui rend ce runner exerçable hors ligne, sur un
-    banc, sans réseau ni board réel — la même propriété qui rend `pj_decision` et
+    versionnés). C'est ce qui rend ce runner exerçable hors ligne, sur un banc,
+    sans réseau ni board réel — la même propriété qui rend `pj_decision` et
     `pj_notify` falsifiables.
     """
-    import importlib.util
-    here = Path(__file__).resolve().parent
     if decision_mod is None:
-        spec = importlib.util.spec_from_file_location("pj_decision", str(here / "pj_decision.py"))
-        decision_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(decision_mod)
+        decision_mod = _load_sibling_module("pj_decision")
     if notify_mod is None:
-        spec = importlib.util.spec_from_file_location("pj_notify", str(here / "pj_notify.py"))
-        notify_mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(notify_mod)
+        notify_mod = _load_sibling_module("pj_notify")
 
     state = load_state(cfg, repo)
     stats = {"repo": repo, "unblocked": [], "commented": [], "ignored": 0, "errors": []}
@@ -747,10 +777,18 @@ def main(argv=None) -> int:
         st = watch_repo(repo, cfg=cfg, dry=dry, verbose=verbose)
         n = len(st["unblocked"])
         total += n
-        if n or st["errors"] or verbose:
+        kids = st.get("children") or []
+        if n or kids or st["errors"] or verbose:
             print(f"[watch] {repo}: {n} débloquée(s), {len(st['commented'])} tracée(s), "
-                  f"{st['ignored']} ignorée(s)"
+                  f"{st['ignored']} ignorée(s), {len(kids)} objet(s) de décision"
                   + (f", erreurs={st['errors']}" if st["errors"] else ""))
+            # Le dry-run ANNONCE ce qu'il ferait : sans cette ligne, un tick qui
+            # produirait trois issues GitHub afficherait « 0 » et se lirait comme
+            # « rien à faire » — l'inverse de la vérité.
+            for k in kids:
+                if dry:
+                    print(f"[watch]   {k['effect']} : carte {k['task']}"
+                          + (f" (enfant #{k['child']})" if k.get("child") else ""))
     if dry:
         print(f"[watch] DRY-RUN — {total} déblocage(s) auraient été appliqués")
     return 0
