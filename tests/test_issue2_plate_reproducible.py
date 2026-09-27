@@ -47,6 +47,7 @@ contrat est un VERT sur un arbre partiellement traduit — pas une abstention.
 Corollaire inchangé : « l'arbre n'est pas encore bilingue » est un état PROVISOIRE,
 jamais un contrat. Le cas qui l'affirmait est INVERSÉ (voir son docstring), pas supprimé.
 """
+import difflib
 import hashlib
 import html
 import importlib.util
@@ -174,6 +175,244 @@ CORPUS_CIBLE = {"files": 20, "lines": 3052, "accented_lines": 1559}
 LEDGER_RE = re.compile(
     r"<script[^>]*id=[\"']plate-ledger[\"'][^>]*>(?P<json>.*?)</script>", re.S | re.I
 )
+
+
+# ------------------------------------------- garde « delta déclaré » (arbitrage t_afa81532)
+#
+# Le go humain du 26/09 (point 3b) fait de pj-dev l'owner du registre VIVANT `plate-ledger` :
+# son amendement daté (conséquence du merge de la PR #8) fait NÉCESSAIREMENT diverger la
+# planche du working tree du sceau. La garde d'intégrité n'est donc plus « octet-identique au
+# sceau » — elle est RÉ-ÉMARGÉE, jamais supprimée :
+#
+#     le working tree EST le sceau   OU   sa divergence est ENTIÈREMENT portée par une entrée
+#                                         `provenance.amendments[]` datée, attribuée, causée
+#                                         et DÉCLARÉE (`slices` + `frame`)
+#
+# Ce qui NE change pas :
+#   - le SCRIPT de mesure n'est JAMAIS amendable : la garde rend AVANT de lire la déclaration,
+#     donc aucun champ d'amendement ne peut lever cet écart ;
+#   - hors `slices` et `provenance.amendments`, AUCUN champ du registre ne peut diverger ;
+#   - la prose ne peut diverger que sur une ligne de slice DÉCLARÉE ;
+#   - une déclaration SANS OBJET (slice déclarée qui ne diverge pas) est un blanc-seing : rouge.
+#
+# Renfort mesuré (repli du §4 de la carte) : une slice déclarée doit être COHÉRENTE — les
+# totaux de son registre égalent la somme de ses fichiers, et sa ligne de prose (§4) porte
+# les mêmes nombres. Sans ce contrôle, le delta pourrait se cacher DANS la slice déclarée.
+
+_AMEND_FIELDS = ("date", "by", "cause", "slices", "frame", "not_changed_seal")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ROW_K_RE = re.compile(r"<td[^>]*class=[\"']k[\"'][^>]*>\s*(?P<k>\d+)\s*</td>", re.I)
+
+
+def _ledger_et_bloc(txt):
+    """(registre, match) — le registre machine de la planche, ou une erreur nommée."""
+    m = LEDGER_RE.search(txt)
+    assert m, (
+        "aucun registre machine `<script type=\"application/json\" id=\"plate-ledger\">` : "
+        "la planche ne porte plus les totaux que la garde doit confronter")
+    return json.loads(m.group("json")), m
+
+
+def _slices_par_k(ledger):
+    """Normalise `slices` (liste d'objets ou mapping k -> objet) en {k: objet}."""
+    raw = ledger.get("slices")
+    if not raw:
+        return {}
+    out = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            try:
+                out[int(k)] = v
+            except (TypeError, ValueError):
+                continue
+    else:
+        for v in raw:
+            if isinstance(v, dict) and v.get("k") is not None:
+                try:
+                    out[int(v["k"])] = v
+                except (TypeError, ValueError):
+                    continue
+    return out
+
+
+def _declaration_du_delta(txt_local, sceau):
+    """(slices déclarées, violations de forme) — lit `provenance.amendments[]` du delta.
+
+    Une divergence NON déclarée est refusée d'emblée : c'est la garde elle-même, pas un
+    avertissement. Chaque entrée doit porter les 6 champs du contrat, et `slices` doit être
+    une liste NON VIDE — un amendement sans `slices` serait un blanc-seing.
+    """
+    ledger, _ = _ledger_et_bloc(txt_local)
+    amend = (ledger.get("provenance") or {}).get("amendments") or []
+    declarees, violations = set(), []
+    if not amend:
+        violations.append(
+            "la planche du working tree diverge du sceau %s mais ne porte AUCUNE entrée "
+            "`provenance.amendments[]` : aucune slice n'est déclarée, la divergence est "
+            "non déclarée" % sceau[:10])
+        return declarees, violations
+    for i, a in enumerate(amend):
+        if not isinstance(a, dict):
+            violations.append("amendment[%d] n'est pas un objet JSON" % i)
+            continue
+        manquants = [f for f in _AMEND_FIELDS if not a.get(f)]
+        if manquants:
+            violations.append(
+                "amendment[%d] : champ(s) obligatoire(s) absent(s) ou vide(s) %s — un "
+                "amendement doit être DATÉ (`date`), ATTRIBUÉ (`by`), CAUSÉ (`cause`), "
+                "DÉCLARÉ (`slices` non vide) et nommer la `frame` de ses nombres ainsi que "
+                "`not_changed_seal`" % (i, manquants))
+        date = str(a.get("date") or "")
+        if date and not _DATE_RE.match(date):
+            violations.append(
+                "amendment[%d] : date %r non datée (attendu AAAA-MM-JJ) — un amendement "
+                "sans date n'est pas un fait daté" % (i, date))
+        sl = a.get("slices")
+        if not isinstance(sl, list) or not sl:
+            violations.append(
+                "amendment[%d] : `slices` doit être une liste NON VIDE des slices dont le "
+                "registre ou la prose diverge" % i)
+        else:
+            for k in sl:
+                try:
+                    declarees.add(int(k))
+                except (TypeError, ValueError):
+                    violations.append(
+                        "amendment[%d] : `slices` porte %r, qui n'est pas un numéro de "
+                        "slice" % (i, k))
+    return declarees, violations
+
+
+def _coherence_slice_declaree(k, rec, prose_slices):
+    """Un delta DÉCLARÉ doit rester cohérent : registre (par fichier ↔ totaux) ↔ prose (§4).
+
+    C'est le renfort du repli du §4 : sans lui, la garde bornée à « ce que `slices` recouvre »
+    accepterait une slice déclarée dont les nombres ont été réécrits sans cohérence interne —
+    un delta caché DANS la slice déclarée. Le contrôle porte sur les NOMBRES (fichiers, lignes,
+    accentuées) ; les slices de type `create` déclarent des fichiers à créer, pas du corpus.
+    """
+    ecarts = []
+    files = rec.get("files")
+    attendu_files = None
+    if isinstance(files, dict):
+        paires = [v for v in files.values() if isinstance(v, dict)]
+        somme_l = sum(v.get("lines", 0) for v in paires)
+        somme_a = sum(v.get("accented_lines", 0) for v in paires)
+        if rec.get("lines") != somme_l:
+            ecarts.append("slice %s : registre %r lignes, somme des fichiers %d"
+                          % (k, rec.get("lines"), somme_l))
+        if rec.get("accented_lines") != somme_a:
+            ecarts.append("slice %s : registre %r accentuées, somme des fichiers %d"
+                          % (k, rec.get("accented_lines"), somme_a))
+        attendu_files = len(files)
+    elif isinstance(files, list):
+        attendu_files = len(files)
+    else:
+        return ["slice %s : `files` absent du registre déclaré" % k]
+    pro = prose_slices.get(k)
+    if pro is None:
+        return ["slice %s : déclarée mais absente du tableau d'impact de la planche" % k]
+    if rec.get("kind") == "translate" and attendu_files is not None \
+            and pro["files"] != attendu_files:
+        ecarts.append("slice %s : prose %d fichier(s), registre %d"
+                      % (k, pro["files"], attendu_files))
+    if pro["lines"] != rec.get("lines"):
+        ecarts.append("slice %s : prose %r lignes, registre %r"
+                      % (k, pro["lines"], rec.get("lines")))
+    if pro["accented_lines"] != rec.get("accented_lines"):
+        ecarts.append("slice %s : prose %r accentuées, registre %r"
+                      % (k, pro["accented_lines"], rec.get("accented_lines")))
+    return ecarts
+
+
+def violations_delta_non_declare(plate_local, script_local, sceau):
+    """[] si le working tree EST le sceau, OU si sa divergence est ENTIÈREMENT déclarée.
+
+    Rend la liste des violations, chacune NOMMANT ce qu'elle impute (le fichier, la slice, le
+    champ) — jamais un booléen : un écart muet ne se corrige pas. La garde n'est pas
+    supprimée, elle est ré-émargée : ce qui change est la seule tolérance admise (une
+    divergence portée par un amendement daté/attribué/causé/déclaré), pas la porte.
+    """
+    v = []
+    plate_seal = subprocess.run(
+        ["git", "-C", str(REPO), "show", "%s:%s" % (sceau, PLATE_REL)],
+        capture_output=True)
+    assert plate_seal.returncode == 0, "le sceau %s ne porte pas %s" % (sceau, PLATE_REL)
+    script_seal = subprocess.run(
+        ["git", "-C", str(REPO), "show", "%s:%s" % (sceau, MEASURE_REL)],
+        capture_output=True)
+    assert script_seal.returncode == 0, "le sceau %s ne porte pas %s" % (sceau, MEASURE_REL)
+
+    # C1 — le script de mesure n'est JAMAIS amendable. La garde rend ICI, avant de lire la
+    # déclaration : aucun champ de `provenance.amendments[]` ne peut lever cet écart.
+    if hashlib.sha256(script_seal.stdout).hexdigest() != \
+            hashlib.sha256(script_local.read_bytes()).hexdigest():
+        return ["%s : le SCRIPT de mesure a dérivé du sceau %s (blob %s) — le script de "
+                "mesure n'est pas amendable : aucun champ de provenance.amendments[] ne "
+                "peut lever cet écart, le script est gelé avec le sceau"
+                % (MEASURE_REL, sceau[:10],
+                   git(REPO, "rev-parse", "%s:%s" % (sceau, MEASURE_REL)).strip()[:10])]
+
+    txt_seal = plate_seal.stdout.decode("utf-8")
+    txt_local = plate_local.read_text(encoding="utf-8")
+    if txt_seal == txt_local:
+        return []                                    # le working tree EST le sceau
+
+    declarees, violations = _declaration_du_delta(txt_local, sceau)
+    v.extend(violations)
+
+    l_seal, m_seal = _ledger_et_bloc(txt_seal)
+    l_local, m_local = _ledger_et_bloc(txt_local)
+
+    # 1. tout champ du registre hors `slices` et `provenance` est gelé
+    for cle in sorted(set(list(l_seal) + list(l_local))):
+        if cle in ("slices", "provenance"):
+            continue
+        if l_seal.get(cle) != l_local.get(cle):
+            v.append("registre.%s s'écarte du sceau %s hors des slices déclarées — seul "
+                     "`slices` et `provenance.amendments` peuvent diverger"
+                     % (cle, sceau[:10]))
+
+    # 2. `provenance` est gelé, sauf `amendments`
+    p_seal = {k: x for k, x in (l_seal.get("provenance") or {}).items() if k != "amendments"}
+    p_local = {k: x for k, x in (l_local.get("provenance") or {}).items() if k != "amendments"}
+    for cle in sorted(set(list(p_seal) + list(p_local))):
+        if p_seal.get(cle) != p_local.get(cle):
+            v.append("provenance.%s s'écarte du sceau %s (seul `amendments` peut diverger)"
+                     % (cle, sceau[:10]))
+
+    # 3. la divergence de `slices` doit égaler EXACTEMENT l'ensemble déclaré
+    ks, kl = _slices_par_k(l_seal), _slices_par_k(l_local)
+    divergentes = {k for k in set(list(ks) + list(kl)) if ks.get(k) != kl.get(k)}
+    for k in sorted(divergentes - declarees):
+        v.append("slice %s diverge du sceau %s sans être déclarée par une entrée "
+                 "provenance.amendments[] — aucun amendement ne la déclare" % (k, sceau[:10]))
+    for k in sorted(declarees - divergentes):
+        v.append("amendement déclare la slice %s, qui ne diverge PAS du sceau %s : une "
+                 "déclaration sans objet est un blanc-seing" % (k, sceau[:10]))
+
+    # 4. une slice DÉCLARÉE doit rester cohérente (registre ↔ prose)
+    prose_slices = plate_totals(txt_local)["slices"]
+    for k in sorted(declarees & divergentes):
+        v.extend(_coherence_slice_declaree(k, kl.get(k) or {}, prose_slices))
+
+    # 5. hors registre, la prose ne peut diverger que sur une ligne de slice déclarée
+    hors_seal = txt_seal[:m_seal.start()] + txt_seal[m_seal.end():]
+    hors_local = txt_local[:m_local.start()] + txt_local[m_local.end():]
+    for ligne in difflib.unified_diff(hors_seal.splitlines(), hors_local.splitlines(),
+                                      lineterm="", n=0):
+        if not ligne.strip() or ligne.startswith(("---", "+++", "@@")):
+            continue
+        m = _ROW_K_RE.search(ligne)
+        k = int(m.group("k")) if m else None
+        if k is None:
+            v.append("la prose de la planche diverge hors registre sur une ligne qui ne "
+                     "porte AUCUNE slice déclarable : %r — aucun amendement ne peut "
+                     "déclarer cette ligne" % ligne[:80])
+        elif k not in declarees:
+            v.append("la prose de la planche diverge hors registre sur la slice %d, "
+                     "qu'aucun amendement ne déclare : %r" % (k, ligne[:80]))
+    return v
 
 
 # --------------------------------------------------------------------------- outils
@@ -673,14 +912,18 @@ def test_nominal_planche_registre_et_arbre_concordent_par_slice(ancrage):
 
 
 def test_nominal_la_planche_et_le_script_mesures_sont_ceux_du_commit(clone_base):
-    """Le working tree porte bien le SCEAU versionné (planche + script), pas un état local.
+    """Le working tree porte le SCEAU versionné, ou un delta ENTIÈREMENT DÉCLARÉ.
 
     Piège connu, gardé intact : ce cas compare le working tree au commit du sceau
     (`clone_base["commit"]`), PAS à la constante de mesure. Sans lui, le banc pourrait
     être vert sur une planche réécrite dans le working tree alors que le sceau porterait
-    autre chose : deux états, deux verts, aucune convergence. Le sceau n'est jamais mis
-    à jour (D2) — il ne doit pas être TRahi non plus : si le working tree a dérivé du
-    commit du sceau, le banc le dit en nommant le fichier et les deux hash.
+    autre chose : deux états, deux verts, aucune convergence.
+
+    Garde RÉ-ÉMARGÉE (arbitrage `t_afa81532`) : le go humain du 26/09 3b fait de pj-dev
+    l'owner du registre VIVANT, donc la planche du working tree diverge légitimement du
+    sceau. La tolérance est bornée et DÉCLARÉE — `violations_delta_non_declare` refuse
+    toute divergence que `provenance.amendments[]` ne porte pas. Le SCRIPT de mesure, lui,
+    n'est jamais amendable : la garde rend avant même de lire la déclaration.
     """
     sceau = clone_base["commit"]
     ecarts = []
@@ -696,14 +939,20 @@ def test_nominal_la_planche_et_le_script_mesures_sont_ceux_du_commit(clone_base)
         h_local = hashlib.sha256(local.read_bytes()).hexdigest()
         h_commit = hashlib.sha256(contenu_commit.stdout).hexdigest()
         if h_local != h_commit:
-            ecarts.append(
-                "%s : le fichier du working tree (sha256 %s) diffère de celui du sceau "
-                "%s (sha256 %s) — le sceau est trahi dans le working tree"
-                % (rel, h_local[:12], sceau[:10], h_commit[:12])
-            )
+            viol = violations_delta_non_declare(REPO / PLATE_REL, REPO / MEASURE_REL, sceau)
+            if viol:
+                ecarts.extend(
+                    "%s (working tree sha256 %s, sceau %s) : %s"
+                    % (rel, h_local[:12], h_commit[:12], m) for m in viol)
+            else:
+                print("witness garde delta déclaré : %s diverge du sceau %s mais la "
+                      "divergence est ENTIÈREMENT portée par une entrée "
+                      "provenance.amendments[] datée, attribuée, causée et déclarée"
+                      % (rel, sceau[:10]))
     assert not ecarts, (
-        "le working tree ne porte plus le SCEAU versionné (le registre n'est jamais "
-        "mis à jour — le sceau doit rester tel que ratifié) :\n  "
+        "le working tree ne porte plus le SCEAU versionné et sa divergence n'est pas "
+        "entièrement déclarée par provenance.amendments[] (le registre n'est jamais mis "
+        "à jour hors amendement ; le sceau doit rester tel que ratifié) :\n  "
         + "\n  ".join(ecarts)
     )
 
@@ -1776,9 +2025,10 @@ def test_limite_le_verdict_sur_l_arbre_vivant_suit_la_datation(ancrage):
 
       - le banc mesure la CIBLE du sceau rendue par `ancrage` (in situ ou clone figé),
         jamais l'avance ;
-      - l'avance est NOMMÉE (les commits entre le sceau et le HEAD du banc), et le sceau
-        reste INTACT dans le working tree (planche + script à l'identique du commit) —
-        le vert d'un arbre partiellement traduit exige la preuve, pas un skip.
+      - l'avance est NOMMÉE (les commits entre le sceau et le HEAD du banc), et la
+        planche du working tree est soit le SCEAU, soit un delta ENTIÈREMENT DÉCLARÉ par
+        `provenance.amendments[]` (garde ré-émargée par l'arbitrage `t_afa81532`) — le
+        vert d'un arbre partiellement traduit exige la preuve, pas un skip.
 
     Le cas est un contrat, pas un constat : il tient dans les DEUX positions de l'arbre
     (à la constante et en avance), et interdit une datation qui sauterait ou passerait
@@ -1803,12 +2053,20 @@ def test_limite_le_verdict_sur_l_arbre_vivant_suit_la_datation(ancrage):
                 capture_output=True)
             assert contenu.returncode == 0, (
                 "le sceau %r ne porte pas %s" % (t["seal"], rel))
-            assert hashlib.sha256(contenu.stdout).hexdigest() == \
-                hashlib.sha256((REPO / rel).read_bytes()).hexdigest(), (
-                "%s du working tree a dérivé du sceau %r : le registre n'est jamais mis "
-                "à jour (D2), le sceau ne doit pas être trahi non plus" % (rel, t["seal"]))
-        print("witness arbre vivant EN AVANCE du sceau %s : %d commit(s) datés, sceau "
-              "intact — verdict sur le sceau %s"
+            if hashlib.sha256(contenu.stdout).hexdigest() == \
+                    hashlib.sha256((REPO / rel).read_bytes()).hexdigest():
+                continue
+            viol = violations_delta_non_declare(REPO / PLATE_REL, REPO / MEASURE_REL,
+                                                t["sha"])
+            assert not viol, (
+                "%s du working tree a dérivé du sceau %r et sa divergence n'est PAS "
+                "entièrement déclarée par provenance.amendments[] (D2) :\n  %s"
+                % (rel, t["seal"], "\n  ".join(viol)))
+            print("witness garde delta déclaré : %s diverge du sceau %s — divergence "
+                  "entièrement déclarée (amendement daté, attribué, causé, `slices` + "
+                  "`frame`)" % (rel, t["seal"][:10]))
+        print("witness arbre vivant EN AVANCE du sceau %s : %d commit(s) datés, delta "
+              "déclaré accepté — verdict sur le sceau %s"
               % (t["seal"], len(t["avance"]), t["mode"]))
 
 
