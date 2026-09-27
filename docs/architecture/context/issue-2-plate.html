@@ -141,7 +141,7 @@ script et la ligne qui la relit.</div>
 <tr><td class='k'>2</td><td>Outil de scan de langue + <b>linter de cartes rendu bilingue</b> + test de l'outil<br><code>i18n-lint-bilingue</code></td><td class='n'>4</td><td class='n'>0</td><td class='n'>0</td><td>fichiers à CRÉER/modifier (pas de traduction) — dimensionnement en volume de code, pas en lignes traduites</td></tr>
 <tr><td class='k'>3</td><td>Documents racine : README, CONTRIBUTING, gabarit de ticket<br><code>readme-contributing-ticket</code></td><td class='n'>3</td><td class='n'>319</td><td class='n'>121</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>4</td><td>SOUL de pj-master — le fichier historiquement le plus exposé au gel des libellés<br><code>soul-pj-master</code></td><td class='n'>1</td><td class='n'>337</td><td class='n'>190</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
-<tr><td class='k'>5</td><td>Les trois SOUL de production (dev, doc, test)<br><code>soul-dev-doc-test</code></td><td class='n'>3</td><td class='n'>292</td><td class='n'>145</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
+<tr><td class='k'>5</td><td>Les trois SOUL de production (dev, doc, test)<br><code>soul-dev-doc-test</code></td><td class='n'>3</td><td class='n'>292</td><td class='n'>0</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>6</td><td>Skill du pont GitHub↔kanban + ses deux références<br><code>skill-gh-kanban-bridge</code></td><td class='n'>3</td><td class='n'>342</td><td class='n'>138</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>7</td><td>Skills de pipeline + skill de gate<br><code>skills-pipelines-gate</code></td><td class='n'>3</td><td class='n'>225</td><td class='n'>92</td><td>dans la cible INVEST (≤ 400 l.)</td></tr>
 <tr><td class='k'>8</td><td>Skill d'orchestration — le plus gros fichier du dépôt<br><code>skill-orchestration</code></td><td class='n'>1</td><td class='n'>542</td><td class='n'>360</td><td><b>exception Small assumée : 1 fichier, 1 domaine, 1 journée d’agent</b></td></tr>
@@ -252,19 +252,19 @@ rendu PNG par <code>chromium headless_shell</code>.</footer>
       "files": {
         "agents/pj-dev/SOUL.md": {
           "lines": 80,
-          "accented_lines": 43
+          "accented_lines": 0
         },
         "agents/pj-doc/SOUL.md": {
           "lines": 108,
-          "accented_lines": 51
+          "accented_lines": 0
         },
         "agents/pj-test/SOUL.md": {
           "lines": 104,
-          "accented_lines": 51
+          "accented_lines": 0
         }
       },
       "lines": 292,
-      "accented_lines": 145
+      "accented_lines": 0
     },
     {
       "k": 6,
@@ -458,6 +458,14 @@ rendu PNG par <code>chromium headless_shell</code>.</footer>
         ],
         "not_changed": "the seal commit e4da869d8e and its blobs (git blob 430d0375..., content sha256 958f7c61...) — this amendment is a dated entry in the LIVING ledger, the seal stays frozen at e4da869d8e",
         "dated_tension": "the plate bench was re-architected on 2026-09-26 (t_887e9508, commit 9c4ad14, ~6h AFTER go 3b) to judge the FROZEN seal: while the branch is ahead of the seal it required the working-tree plate to stay byte-identical to the seal (test_nominal_la_planche_et_le_script_mesures_sont_ceux_du_commit + test_limite_le_verdict_sur_l_arbre_vivant_suit_la_datation), which this amendment tripped by design. TENSION CLOSED by arbitration t_afa81532 (option b, 2026-09-27): the guard itself is RE-MARGINED (card t_6e730cef) — it now accepts a working-tree divergence only when it is ENTIRELY carried by a dated, attributed, caused and declared provenance.amendments[] entry, and reddens again on any undeclared mutation. The seal stays frozen; only the guard's letter moved."
+      },
+      {
+        "date": "2026-09-27",
+        "by": "pj-dev (card t_fbf73a62, human go 26/09 point 3b: pj-dev is owner of the plate-ledger)",
+        "cause": "slice 5 translated 2026-09-27 on wt/issue-2-rewrite-in-english — the three prose documents agents/pj-dev/SOUL.md, agents/pj-doc/SOUL.md, agents/pj-test/SOUL.md were translated into English (line counts preserved 80/108/104, all diacritics removed); the two frozen machine protocols (Importé depuis / ROOM:) are absent from the three files, so no frozen literal was touched",
+        "slices": [5],
+        "frame": "slice 5 only — its register rows `agents/pj-dev/SOUL.md`, `agents/pj-doc/SOUL.md`, `agents/pj-test/SOUL.md` ({lines, accented_lines} -> accented 43/51/51 -> 0/0/0) and the slice-5 accented total 145 -> 0 (the line total 292 = 80+108+104 is UNCHANGED, the translation preserves the per-file line counts), plus the §4 prose row of slice 5 (accented 145 -> 0). NOT covered: the line counts (80/108/104, total 292 — preserved), the other 2 slices already amended (slice 9, unchanged by this entry), every other slice, the corpus frame (20 files / 3052 lines / 1559 accented lines, a SEAL snapshot that is never re-baselined by a slice), the measure script, and the seal itself.",
+        "not_changed_seal": "seal e4da869d8e and its blobs (git blob 430d0375..., content sha256 958f7c61...) — this amendment is a dated entry in the LIVING ledger, the seal stays frozen at e4da869d8e"
       }
     ]
   }
