@@ -45,6 +45,12 @@ référence git** en mémoire (blob `c3922946`, immuable) et matérialisés HORS
 dépôt (`tempfile`), jamais versionnés comme fixture : un fichier de 3,5 Mo
 dans `tests/` violerait CONTRIBUTING.
 
+Le montage **symétrique** (« HEAD sain + fichier de travail corrompu non
+committé ») porte la seconde jambe : il prouve qu'un fichier de travail
+divergent ne blanchit pas un blob versionné sain, donc la jambe « fichier du
+worktree » de `verdict()` est VIVE et PORTEUSE — sa neutralisation
+(`aligne, motif_wt = True, …`) fait rougir ce cas.
+
 **Anti-récursion.** Un cas de montage ne peut pas relancer `pytest` sur la
 copie du banc : cette copie contient les cas de montage eux-mêmes, la relance
 se rejouerait donc SANS BORNE. Mesure faite avant correctif : 9 processus
@@ -622,6 +628,15 @@ def remplacer_hors_commit(depot: Path, blob: bytes) -> None:
     (Path(depot) / CHEMIN_ASSET).write_bytes(blob)
 
 
+def committer_dans(depot: Path, message: str) -> None:
+    """Committe l'arbre du dépôt jetable (identité locale au montage, jamais celle
+    de l'utilisateur) — permet de fabriquer un blob VERSIONNÉ sain, donc un
+    montage où c'est le fichier de travail qui diverge."""
+    git = ["git", "-c", "user.name=pj-test", "-c", "user.email=pj-test@local"]
+    for argv in (git + ["add", "-A"], git + ["commit", "-qm", message]):
+        subprocess.run(argv, cwd=str(depot), capture_output=True, check=True)
+
+
 def copie_du_banc(depot: Path) -> Path:
     """Copie le banc dans <depot>/tests/ — hors du dépôt de travail."""
     dossier = Path(depot) / "tests"
@@ -1047,6 +1062,10 @@ def test_erreur_le_blob_versionne_casse_est_refuse_meme_worktree_sain():
         assert rc != 0, sortie
         assert "bridge/%s" % NOM_ASSET in sortie, sortie
         assert BLOB_CASSE[:12] in sortie, sortie
+        assert SHA_CASSE[:16] in sortie, (
+            "le verdict doit nommer l'identité du blob versionné fautif "
+            "(sha256 %s…):\n%s" % (SHA_CASSE[:16], sortie)
+        )
         assert REF_VERDICT in sortie, sortie
         assert "${DISCORD_ID}" in sortie or "census non conforme" in sortie, sortie
 
@@ -1082,6 +1101,106 @@ def test_erreur_le_cli_nomme_le_defaut_et_sort_en_rc1():
         assert "${DISCORD_ID}" in r.stdout, r.stdout
     finally:
         td.cleanup()
+
+
+def test_limite_un_fichier_de_travail_divergent_tue_la_jambe_worktree():
+    """limite : un fichier de travail DIVERGENT ne blanchit jamais un blob
+    versionné SAIN — la jambe « fichier du travail » de `verdict()` est VIVE et
+    PORTEUSE, donc le mutant qui la neutralise est TUÉ.
+
+    Montage : dépôt jetable HORS dépôt de travail dont le blob VERSIONNÉ est
+    l'amont sain (`79b89d7c`) et dont le seul fichier de travail est corrompu
+    SANS commit. La jambe des octets est donc VERTE sur ce montage : un
+    « REFUSÉ » ne peut venir que de la divergence du fichier de travail, c'est
+    ce qui rend la mesure concluante (et non un refus d'octets déguisé).
+
+    Pourquoi ce cas rend le mutant tuable : la neutralisation de la jambe
+    (`aligne, motif_wt = True, …`, lignes 474/480/484 de `verdict()`, absentes
+    du rapport de couverture avant ce cas) laisse le refus disparaître et le
+    verdict repasser à `ok=True` avec `rc=0`. La suite exécutée sur le banc
+    muté devient donc ROUGE sur ce cas — c'est la mesure inverse, consignée par
+    le rapport de convergence.
+    """
+    if _skip_si_git_absent():
+        return
+    sain, casse = blob_versionne(), blob_casse()
+    assert sain is not None and casse is not None
+    with tempfile.TemporaryDirectory(prefix="pj-mermaid-divergence-") as racine:
+        depot = creer_depot_jetable(racine, parent=str(REPO))
+        # blob VERSIONNÉ sain : la jambe des octets est VERTE ici, donc
+        # l'assertion qui suit ne peut pas être satisfaite par un refus d'octets.
+        remplacer_hors_commit(depot, sain)
+        committer_dans(depot, "asset sain")
+        assert oid_blob(str(CHEMIN_ASSET), depot) == OID_AMONT
+        ok_octets, motif_octets = invariant(sain, "montage-sain.js", node_rc=0)
+        assert ok_octets, motif_octets
+
+        # pendant positif : sur ce même dépôt, worktree ALIGNÉ -> verdict OK.
+        # Le refus mesuré plus bas ne peut donc pas venir d'un verdict
+        # systématiquement négatif (le cas n'est pas tautologique).
+        aligne_sain, motif_sain = worktree_aligne_sur_blob(depot / CHEMIN_ASSET, depot)
+        assert aligne_sain, motif_sain
+        ok_aligne, motif_aligne, _ = verdict(repo=depot, node_rc=0)
+        assert ok_aligne, motif_aligne
+        assert "fichier du worktree ==" in motif_aligne, motif_aligne
+
+        # puis on corrompt le SEUL fichier de travail, SANS committer
+        remplacer_hors_commit(depot, casse)
+        r = subprocess.run(["git", "status", "--short"], cwd=str(depot),
+                           capture_output=True, text=True)
+        assert "M bridge/%s" % NOM_ASSET in r.stdout, r.stdout
+        assert oid_blob(str(CHEMIN_ASSET), depot) == OID_AMONT, \
+            "le montage doit garder un blob versionné sain"
+        aligne, motif_wt = worktree_aligne_sur_blob(depot / CHEMIN_ASSET, depot)
+        assert not aligne, "montage inopérant : le fichier de travail doit diverger"
+        assert "≠" in motif_wt, motif_wt
+
+        # LE CAS QUI TUE LE MUTANT : le verdict doit REFUSER en nommant la
+        # divergence du fichier de travail. Cette assertion tombe dès que la
+        # jambe est neutralisée dans `verdict()`.
+        ok, motif, data = verdict(repo=depot, node_rc=0)
+        assert not ok, (
+            "un fichier de travail divergent est blanchi par verdict() — la "
+            "jambe « fichier du travail » ne porte pas le verdict:\n%s" % motif
+        )
+        assert data == sain, "le verdict doit rester mesuré sur le blob sain"
+        assert "fichier du worktree" in motif and "≠" in motif, motif
+        assert "REFUSÉ" in motif, motif
+
+        # et la même jambe est morte par le point d'entrée CLI de la copie du
+        # banc : c'est le `rc` dont l'AC exige la valeur.
+        copie_du_banc(depot)
+        rc, sortie = lancer_le_banc(depot)
+        assert rc != 0, (
+            "le banc est VERT (rc=0) sur un fichier de travail divergent:\n%s"
+            % sortie
+        )
+        assert "fichier du worktree ≠ blob" in sortie, sortie
+
+        # dernier volet de la MÊME jambe : elle refuse aussi quand le chemin du
+        # fichier de travail n'est PAS résolu par `git ls-files '*.js'` (asset
+        # hors index) — le verdict ne retombe jamais sur un chemin deviné.
+        subprocess.run(["git", "rm", "-q", "--cached", str(CHEMIN_ASSET)],
+                       cwd=str(depot), capture_output=True)
+        assert oid_blob(str(CHEMIN_ASSET), depot) == OID_AMONT, \
+            "le blob versionné doit rester sain et lisible"
+        assert resoudre_asset(depot, {}) is None, "montage inopérant : index non vidé"
+        ok_nu, motif_nu, _ = verdict(repo=depot, node_rc=0)
+        assert not ok_nu, "un chemin de worktree non résolu est blanchi par verdict()"
+        assert "non résolu" in motif_nu and "git ls-files" in motif_nu, motif_nu
+
+        # et la branche SŒUR du même garde : un dépôt dont l'ASSET est ABSENT de
+        # l'arbre versionné est refusé — jamais de repli sur le fichier de
+        # travail ni de verdict vert par absence de chemin.
+        (depot / CHEMIN_ASSET).unlink()
+        assert not (depot / CHEMIN_ASSET).exists(), "montage inopérant : fichier encore présent"
+        assert resoudre_asset(depot, {}) is None, "montage inopérant : fichier encore listé"
+        committer_dans(depot, "asset absent de l'arbre versionné")
+        assert chemin_versionne(depot) is None, "montage inopérant : asset encore versionné"
+        ok_absent, motif_absent, data_absent = verdict(repo=depot, node_rc=0)
+        assert not ok_absent, "un dépôt sans asset versionné est blanchi par verdict()"
+        assert "asset absent de l'arbre versionné" in motif_absent, motif_absent
+        assert data_absent is None, "aucun octet ne doit être rendu sans blob versionné"
 
 
 def test_erreur_le_cli_sans_argument_juge_le_blob_versionne():
