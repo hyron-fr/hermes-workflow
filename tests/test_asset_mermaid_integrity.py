@@ -27,16 +27,47 @@ et la fonction reste exécutable en mode CLI sous un interpréteur sans pytest :
 
     python3 tests/test_asset_mermaid_integrity.py [ASSET]
 
+**Mode par défaut du verdict : le blob VERSIONNÉ.** Les octets analysés
+(sha256, census multiset, offsets, rampe) sont ceux que le dépôt PUBLIE, lus
+par `git cat-file blob HEAD:bridge/mermaid.min.js` ; le libellé du verdict
+nomme le chemin, l'oid du blob et le commit lus. Le fichier du worktree n'est
+qu'une **seconde jambe, plus faible** (`git diff --quiet HEAD -- <chemin>`) :
+un correctif présent seulement dans le worktree, ou un commit qui recasse
+l'asset, ne peut donc pas blanchir le banc. `PJ_MERMAID_ASSET` reste une
+surcharge **explicite** (jambe paramétrée, légitime pour rejouer le RED) :
+elle s'ajoute au verdict, elle ne le remplace jamais.
+
 L'asset est résolu par `git ls-files '*.js'` depuis la racine du worktree —
 jamais par la constante du consommateur `mermaid_render.py`, qui pointe hors
-dépôt et masquerait le défaut. Les mutants M1/M3 et le témoin cassé sont
-**dérivés par référence git** en mémoire (blob `c3922946`, immuable), jamais
-versionnés comme fixture : un fichier de 3,5 Mo dans `tests/` violerait
-CONTRIBUTING.
+dépôt et masquerait le défaut. Les mutants M1/M3, le témoin cassé et le
+montage « HEAD cassé + worktree sain non committé » sont **dérivés par
+référence git** en mémoire (blob `c3922946`, immuable) et matérialisés HORS
+dépôt (`tempfile`), jamais versionnés comme fixture : un fichier de 3,5 Mo
+dans `tests/` violerait CONTRIBUTING.
+
+**Anti-récursion.** Un cas de montage ne peut pas relancer `pytest` sur la
+copie du banc : cette copie contient les cas de montage eux-mêmes, la relance
+se rejouerait donc SANS BORNE. Mesure faite avant correctif : 9 processus
+`pytest` à t+8 s, 14 à t+16 s, sortie `EXIT=137` (SIGKILL) — c'est la cause
+des OOM des runs précédents. Les montages passent donc par le **MODE CLI**
+(`python3 <copie>` — le point d'entrée dont l'AC exige le `rc`), et le
+sous-processus reçoit `PJ_BANC_INTERNE=1`, qui rend tout montage résiduel
+`skip` VISIBLE : la récursion est structurellement impossible, même si une
+relance `pytest` était réintroduite dans le lanceur.
+
+**Portée de la preuve.** Le montage « HEAD cassé + fichier de travail sain non
+committé » est reconstitué par **dépôt git jetable** (`git init` + alternat
+d'objets), et son blob cassé est produit par **commit** : il porte donc un
+`HEAD` réel que `git hash-object`/`git cat-file` désignent. C'est la classe de
+défaut mesurée par conv-1 : un fichier sain non committé masquait un blob
+versionné cassé. Le banc ne prétend pas rejouer littéralement un
+`git clone --shared`, geste que je n'ai pas reproduit ici ; il prouve que le
+verdict ne se laisse plus blanchir par l'état du seul fichier de travail.
 """
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import os
 import re
@@ -61,6 +92,13 @@ REPO = Path(__file__).resolve().parents[1]
 NOM_ASSET = "mermaid.min.js"
 #: chemin relatif canonique de l'asset sur cette branche
 CHEMIN_ASSET = Path("bridge") / "mermaid.min.js"
+#: ref dont les octets font le verdict — `HEAD`, jamais l'index ni le worktree :
+#: c'est ce que le dépôt PUBLIE (un `git clone` d'une autre machine le lit).
+#: Le commit réellement lu est nommé dans chaque verdict (non ambiguïté en cas
+#: de re-spawn du banc sur un autre tip).
+REF_VERDICT = "HEAD"
+#: ref de repli pour monter un dépôt d'essai quand `dev` n'est pas local
+REF_PARENT = "dev"
 
 #: identité d'octets de l'artefact amont `mermaid@11.17.2` — l'oracle du banc,
 #: déjà mesuré ; aucune dépendance réseau/npm n'est requise pour le rejouer.
@@ -69,8 +107,23 @@ SHA_AMONT = "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8"
 SHA_CASSE = "ba67386c615929a28cd1323fae2f08851dfb677e35e23320da289a6ddb0e39af"
 #: blob git immuable du bundle cassé — base de dérivation des mutants
 BLOB_CASSE = "c39229467dc756b08e13755850dce6abff41c7d0"
+#: OID du blob SAIN tel que versionné au tip de la branche (objet `bridge/mermaid.min.js`
+#: dans l'arbre de HEAD) — nommé dans le verdict, il rend le banc non ambigu.
+OID_AMONT = "79b89d7cb19a8e89a1fffa1d10c2e5987afd5481"
 #: ref où le blob cassé est versionné (repli si le blob a été élagué)
 REF_CASSE = "origin/dev:bridge/mermaid.min.js"
+
+#: Marqueur de RELANCE INTERNE : positionné par `lancer_le_banc()` dans le
+#: environnement du sous-processus, il rend les cas de montage `skip` VISIBLE.
+#: Il ferme la récursion par construction : une copie du banc relancée en
+#: pytest ne peut plus remonter sa propre chaîne de sous-processus (mesuré
+#: avant correctif : 9 pytest à t+8 s, 14 à t+16 s, EXIT=137).
+MARQUEUR_INTERNE = "PJ_BANC_INTERNE"
+
+#: Marqueur de la jambe PARAMÉTRÉE de surcharge, toujours nommée dans le motif :
+#: une jambe active ne peut pas être silencieuse (la surcharge s'ajoute au
+#: verdict du blob versionné, elle ne le remplace jamais).
+MARQUEUR_SURCHARGE = "SURCHARGE"
 
 #: le motif interdit est le placeholder LITTÉRAL injecté par le sanitizer.
 #: Une jambe sur la *forme* `${...}` serait un faux positif massif : l'asset
@@ -305,18 +358,25 @@ def python_info(env: Optional[dict] = None) -> str:
 # défaut (faux vert sur `dev`).
 
 
-def git_js(repo: Path = REPO) -> list:
-    r = subprocess.run(["git", "ls-files", "*.js"], cwd=str(repo),
-                       capture_output=True, text=True)
-    return [l.strip() for l in r.stdout.splitlines() if l.strip()] if r.returncode == 0 else []
+def git_js(repo: Path = REPO, ref: Optional[str] = None) -> list:
+    """Fichiers `*.js` du dépôt — index par défaut, arbre de `ref` si fourni."""
+    argv = ["git", "ls-files", "*.js"] if ref is None else ["git", "ls-tree", "-r",
+                                                           "--name-only", ref]
+    r = subprocess.run(argv, cwd=str(repo), capture_output=True, text=True)
+    if r.returncode != 0:
+        return []
+    lignes = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    if ref is not None:
+        lignes = [l for l in lignes if l.endswith(".js")]
+    return lignes
 
 
 def resoudre_asset(repo: Path = REPO, env: Optional[dict] = None) -> Optional[Path]:
-    """Asset du worktree, résolu par `git ls-files '*.js'`.
+    """Chemin de l'asset du WORKTREE, résolu par `git ls-files '*.js'`.
 
-    `PJ_MERMAID_ASSET` surcharge explicitement le chemin (banc paramétré par
-    ref : c'est ce qui permet de rejouer le verdict contre l'état d'avant
-    correction) — aucun chemin par défaut n'est épinglé pour autant.
+    Jambe faible : sert uniquement à établir que le fichier de travail est
+    aligné sur le blob versionné (`git diff --quiet`). Le verdict des octets,
+    lui, ne passe jamais par ce chemin — il lit `git cat-file blob HEAD:…`.
     """
     env = dict(os.environ) if env is None else env
     force = env.get("PJ_MERMAID_ASSET")
@@ -327,6 +387,122 @@ def resoudre_asset(repo: Path = REPO, env: Optional[dict] = None) -> Optional[Pa
     if len(candidats) != 1:
         return None
     return (repo / candidats[0]).resolve()
+
+
+def chemin_versionne(repo: Path = REPO) -> Optional[str]:
+    """Chemin de l'asset dans l'ARBRE de `HEAD` — source du verdict.
+
+    Résolu depuis l'arbre, jamais depuis `git ls-files` : ce chemin nomme le
+    blob publié, pas le fichier de travail d'un correctif non committé.
+    """
+    candidats = [f for f in git_js(repo, ref=REF_VERDICT) if Path(f).name == NOM_ASSET]
+    return candidats[0] if len(candidats) == 1 else None
+
+
+def ref_oid(ref: str, repo: Path = REPO) -> Optional[str]:
+    """OID du commit/objet désigné par `ref`, ou None."""
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref],
+                       cwd=str(repo), capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+def oid_blob(chemin: str, repo: Path = REPO, ref: Optional[str] = None) -> Optional[str]:
+    """OID du blob porté par `chemin` dans `ref` (HEAD par défaut)."""
+    ref = REF_VERDICT if ref is None else ref
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "%s:%s" % (ref, chemin)],
+                       cwd=str(repo), capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+def blob_versionne(chemin: Optional[str] = None, repo: Path = REPO,
+                   ref: Optional[str] = None) -> Optional[bytes]:
+    """Octets du blob VERSIONNÉ — le mode par défaut du verdict.
+
+    `git cat-file blob <ref>:<chemin>` (repli `git show`). Renvoie None si le
+    chemin n'existe pas dans l'arbre : le banc refuse alors, il ne retombe
+    JAMAIS sur le fichier du worktree.
+    """
+    ref = REF_VERDICT if ref is None else ref
+    chemin = chemin or chemin_versionne(repo)
+    if chemin is None:
+        return None
+    data = blob_par_ref("%s:%s" % (ref, chemin), repo)
+    if data is None:
+        data = blob_par_ref(oid_blob(chemin, repo, ref) or "", repo)
+    return data
+
+
+def libelle_versionne(chemin: Optional[str] = None, repo: Path = REPO,
+                      ref: Optional[str] = None) -> str:
+    """Libellé du verdict : chemin + oid du blob + commit LUS (non ambigu)."""
+    ref = REF_VERDICT if ref is None else ref
+    chemin = chemin or chemin_versionne(repo)
+    commit = (ref_oid(ref, repo) or "?")[:12]
+    oid = oid_blob(chemin, repo, ref) if chemin else None
+    return "blob %s:%s (%s, commit %s)" % (
+        ref, chemin or "?", (oid or "?")[:12], commit,
+    )
+
+
+def worktree_aligne_sur_blob(chemin, repo: Path = REPO, ref: Optional[str] = None):
+    """Jambe faible : `git diff --quiet <ref> -- <chemin>` -> `(aligne, motif)`.
+
+    Un correctif présent seulement dans le worktree (ou un commit qui recasse
+    l'asset) rompt cette jambe : elle ne peut donc pas blanchir le banc.
+    """
+    ref = REF_VERDICT if ref is None else ref
+    chemin = Path(chemin)
+    rel = str(chemin.relative_to(repo)) if chemin.is_absolute() else str(chemin)
+    r = subprocess.run(["git", "diff", "--quiet", ref, "--", rel],
+                       cwd=str(repo), capture_output=True)
+    if r.returncode == 0:
+        return True, "fichier du worktree == blob %s:%s" % (ref, rel)
+    return False, ("fichier du worktree ≠ blob %s:%s (correctif non committé, "
+                   "ou asset recassé dans le commit lu)" % (ref, rel))
+
+
+def verdict(repo: Path = REPO, env: Optional[dict] = None, node_rc: Optional[int] = None):
+    """Verdict NON pur : octets du blob VERSIONNÉ + jambe worktree, sans I/O hors dépôt.
+
+    Rend `(ok, motif, data)` ; `data` est None si le blob versionné est
+    introuvable (refus, jamais de repli sur le fichier de travail).
+    """
+    chemin = chemin_versionne(repo)
+    libelle = libelle_versionne(chemin, repo)
+    data = blob_versionne(chemin, repo)
+    if data is None:
+        return False, "%s REFUSÉ: asset absent de l'arbre versionné (%s)" % (
+            libelle, REF_VERDICT), None
+    ok, motif = invariant(data, libelle, node_rc=node_rc)
+    if ok:
+        chemin_wt = resoudre_asset(repo, {})
+        if chemin_wt is None:
+            return False, "%s REFUSÉ: chemin du worktree non résolu par " \
+                          "`git ls-files '*.js'`" % libelle, data
+        aligne, motif_wt = worktree_aligne_sur_blob(chemin_wt, repo)
+        if not aligne:
+            return False, "%s REFUSÉ: %s" % (libelle, motif_wt), data
+        ok, motif = True, "%s — %s" % (motif, motif_wt)
+    if env is not None and env.get("PJ_MERMAID_ASSET"):
+        # jambe PARAMÉTRÉE : la surcharge s'AJOUTE au verdict, elle ne le
+        # remplace jamais (sinon un asset non versionné blanchirait le dépôt).
+        # Elle est TOUJOURS nommée dans le motif — une jambe active ne peut
+        # pas être silencieuse.
+        force = env.get("PJ_MERMAID_ASSET")
+        chemin_force = resoudre_asset(repo, env)
+        if chemin_force is None or not chemin_force.exists():
+            return False, "%s REFUSÉ: %s introuvable (%s)" % (
+                libelle, MARQUEUR_SURCHARGE, force), data
+        # hériter du rc du blob versionné ferait refuser une surcharge saine dès
+        # que le blob versionné est cassé (et inversement), ce qui confondrait
+        # les deux jambes.
+        rc_force = node_check(chemin_force)[0] if node_rc is not None else None
+        okf, motif_force = invariant(chemin_force.read_bytes(),
+                                     "surcharge %s" % chemin_force, node_rc=rc_force)
+        if not okf:
+            return False, "%s REFUSÉ: %s" % (libelle, motif_force), data
+        motif = "%s ; %s: %s" % (motif, MARQUEUR_SURCHARGE, motif_force)
+    return ok, motif, data
 
 
 def blob_par_ref(ref: str, repo: Path = REPO) -> Optional[bytes]:
@@ -364,14 +540,122 @@ def ecrire_tmp(blob: bytes, nom: str):
     return td, chemin
 
 
-def rapport(data: bytes, label: str, node_rc: Optional[int] = None):
-    """Sortie lisible : nomme l'asset, les jambes mesurées et le verdict.
+def ecrire_tmp_durable(blob: bytes, nom: str):
+    """Écrit un blob HORS du dépôt et le nettoie à la sortie du processus.
 
-    Rend `(texte, ok)` — le verdict est celui de la fonction pure `invariant`.
+    Sert aux jambes qui doivent matérialiser des octets versionnés pour un
+    outil externe (`node --check`) sans passer par le fichier du worktree.
     """
-    ok, motif = invariant(data, label, node_rc=node_rc)
+    td = tempfile.mkdtemp(prefix="pj-mermaid-verdict-")
+    chemin = Path(td) / nom
+    chemin.write_bytes(blob)
+    atexit.register(shutil.rmtree, td, True)
+    return chemin
+
+
+def _chemin_tmp(data: bytes, nom: str = "asset.js") -> Path:
+    """Alias interne : matérialise le blob versionné hors dépôt pour `node`."""
+    return ecrire_tmp_durable(data, nom)
+
+
+# ------------------------------------------------------- montages jetables ---
+# Le montage « HEAD cassé + fichier de travail sain mais non committé » se
+# reconstitue dans un dépôt JETABLE hors du dépôt de travail : jamais dans
+# `tests/`, jamais dans le worktree partagé.
+
+
+def git_dispo() -> bool:
+    return shutil.which("git") is not None
+
+
+def objets_dir(repo: Path) -> Optional[Path]:
+    """Répertoire d'objets EFFECTIF du dépôt (résout les worktrees liés)."""
+    r = subprocess.run(["git", "rev-parse", "--path-format=absolute",
+                        "--git-path", "objects"],
+                       cwd=str(repo), capture_output=True, text=True)
+    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
+
+def creer_depot_jetable(racine, avec_dev: bool = True, parent: Optional[str] = None):
+    """Dépôt git jetable hors dépôt, portant un `bridge/mermaid.min.js` à 2 lignes.
+
+    `parent` (chemin de worktree réel) permet de dériver le témoin cassé par
+    référence git : le blob `c3922946` est alors lu depuis l'objet partagé d'un
+    alternat, sans réseau ni copie de 3,5 Mo.
+    """
+    racine = Path(racine)
+    depot = racine / "depot"
+    depot.mkdir(parents=True, exist_ok=True)
+
+    def git(*a, **kw):
+        return subprocess.run(
+            ["git", "-c", "user.name=pj-test", "-c", "user.email=pj-test@local"] + list(a),
+            cwd=str(depot), capture_output=True, text=True, **kw,
+        )
+
+    git("init", "-q", "-b", "dev")
+    if parent is not None:
+        alternat = objets_dir(Path(parent))
+        if alternat is not None and alternat.exists():
+            (depot / ".git" / "objects" / "info").mkdir(parents=True, exist_ok=True)
+            (depot / ".git" / "objects" / "info" / "alternates").write_text(
+                str(alternat) + "\n"
+            )
+    (depot / "bridge").mkdir(parents=True, exist_ok=True)
+
+    casse = blob_casse(Path(parent) if parent is not None else REPO)
+    if casse is not None:
+        (depot / "bridge" / NOM_ASSET).write_bytes(casse)
+        git("add", "-A")
+        git("commit", "-qm", "asset casse (blob %s)" % BLOB_CASSE[:8])
+        if avec_dev:
+            git("branch", "-M", "dev")
+    else:  # pragma: no cover - repli si le blob cassé est introuvable
+        (depot / "bridge" / NOM_ASSET).write_bytes(b"placeholder ${DISCORD_ID} nope\n")
+        git("add", "-A")
+        git("commit", "-qm", "asset casse synthetique")
+    return depot
+
+
+def remplacer_hors_commit(depot: Path, blob: bytes) -> None:
+    """Écrase le fichier de travail du dépôt jetable SANS committer."""
+    (Path(depot) / CHEMIN_ASSET).write_bytes(blob)
+
+
+def copie_du_banc(depot: Path) -> Path:
+    """Copie le banc dans <depot>/tests/ — hors du dépôt de travail."""
+    dossier = Path(depot) / "tests"
+    dossier.mkdir(parents=True, exist_ok=True)
+    cible = dossier / Path(__file__).name
+    shutil.copyfile(str(Path(__file__).resolve()), str(cible))
+    return cible
+
+
+def interpreter_python_du_worktree() -> Optional[str]:
+    """Interpréteur qui SAIT importer pytest (les jambes jumelles l'exigent)."""
+    for cand in (sys.executable, resoudre_python(), shutil.which("python3")):
+        if not cand or not Path(cand).exists():
+            continue
+        r = subprocess.run([cand, "-c", "import pytest"], capture_output=True)
+        if r.returncode == 0:
+            return cand
+    return None
+
+
+def rapport(data: bytes, label: str, node_rc: Optional[int] = None,
+            extra: str = "", verdict_final=None):
+    """Sortie lisible : nomme le blob versionné, les jambes mesurées, le verdict.
+
+    Rend `(texte, ok)`. Sans `verdict_final`, le verdict est celui de la
+    fonction pure `invariant` ; avec, c'est celui — plus complet — rendu par
+    `verdict()`, afin qu'il n'existe qu'UN SEUL chemin de verdict (le CLI ne
+    peut pas diverger du banc).
+    """
+    ok, motif = (invariant(data, label, node_rc=node_rc) if verdict_final is None
+                 else verdict_final)
     lignes = [
         "asset   : %s (%d o)" % (label, len(data)),
+        "commit  : %s" % (ref_oid(REF_VERDICT) or "?"),
         "python  : %s" % python_info(),
         "node    : %s" % node_info(),
         "sha256  : %s" % hashlib.sha256(data).hexdigest(),
@@ -379,19 +663,41 @@ def rapport(data: bytes, label: str, node_rc: Optional[int] = None):
         "rampe   : %s" % (rampe_litteral(data),),
         "VERDICT : %s" % motif,
     ]
+    if extra:
+        lignes.insert(4, "worktree: %s" % extra)
     return "\n".join(lignes), ok
 
 
 # --------------------------------------------------------------------- CLI ---
 
 def main(argv: Optional[list] = None) -> int:
+    """Verdict CLI : par défaut sur le blob VERSIONNÉ ; argument = surcharge.
+
+    Sans argument, le verdict lit `git cat-file blob HEAD:<chemin>`. Un chemin
+    passé en argument (ou `PJ_MERMAID_ASSET`) est une jambe PARAMÉTRÉE qui
+    s'ajoute au verdict du blob versionné — elle ne le remplace jamais.
+
+    Le CLI appelle `verdict()`, donc le CLI et le banc ne peuvent pas diverger :
+    un seul chemin de verdict.
+    """
     argv = list(sys.argv[1:] if argv is None else argv)
-    chemin = Path(argv[0]).resolve() if argv else resoudre_asset()
-    if chemin is None or not chemin.exists():
-        print("asset introuvable: %s" % chemin)
-        return 2
-    rc, _ = node_check(chemin)
-    sortie, ok = rapport(chemin.read_bytes(), chemin.name, node_rc=rc)
+    env = dict(os.environ)
+    if argv:
+        env["PJ_MERMAID_ASSET"] = argv[0]
+    chemin = chemin_versionne()
+    libelle = libelle_versionne(chemin)
+    data = blob_versionne(chemin)
+    if data is None:
+        print("%s REFUSÉ: asset absent de l'arbre versionné (%s)" % (libelle, REF_VERDICT))
+        return 1
+    rc = node_check(_chemin_tmp(data), node=None)[0]
+    ok, motif, _ = verdict(env=env, node_rc=rc)
+    extra = ""
+    chemin_wt = resoudre_asset(env={})
+    if chemin_wt is not None:
+        extra = worktree_aligne_sur_blob(chemin_wt)[1]
+    sortie, _ = rapport(data, libelle, node_rc=rc, extra=extra,
+                        verdict_final=(ok, motif))
     print(sortie)
     return 0 if ok else 1
 
@@ -400,53 +706,81 @@ def main(argv: Optional[list] = None) -> int:
 
 # --------------------------------------------------------------- nominal ---
 
+
 def test_nominal_le_blob_versionne_est_l_artefact_amont():
-    """nominal : le blob versionné du worktree EST l'artefact amont — verdict OK."""
-    asset = resoudre_asset()
-    assert asset is not None, "asset non résolu par `git ls-files '*.js'`"
-    data = asset.read_bytes()
-    rc, note = node_check(asset)
-    ok, motif = invariant(data, asset.name, node_rc=rc)
+    """nominal : le blob VERSIONNÉ de HEAD EST l'artefact amont — verdict OK.
+
+    Le verdict ne porte pas sur le fichier du worktree : il lit
+    `git cat-file blob HEAD:<chemin>` et nomme le blob + le commit lus.
+    """
+    data = blob_versionne()
+    assert data is not None, "blob versionné introuvable dans %s" % REF_VERDICT
+    libelle = libelle_versionne()
+    chemin = _chemin_tmp(data)
+    rc, note = node_check(chemin)
+    ok, motif = invariant(data, libelle, node_rc=rc)
     assert ok, "%s (node: %s)" % (motif, note)
+    assert oid_blob(chemin_versionne()) == OID_AMONT, oid_blob(chemin_versionne())
+    assert (ref_oid(REF_VERDICT) or "")[:12] in libelle, libelle
+
+
+def test_nominal_le_verdict_nomme_le_blob_versionne_et_le_commit():
+    """nominal : le libellé du verdict porte le chemin, l'oid du blob et le
+    commit LUS — le banc reste non ambigu si la branche est rejouée sur un
+    autre tip."""
+    chemin = chemin_versionne()
+    assert chemin == str(CHEMIN_ASSET), chemin
+    oid = oid_blob(chemin)
+    assert oid == OID_AMONT, oid
+    libelle = libelle_versionne(chemin)
+    assert "blob %s:%s" % (REF_VERDICT, chemin) in libelle, libelle
+    assert oid[:12] in libelle, libelle
+    assert (ref_oid(REF_VERDICT) or "")[:12] in libelle, libelle
+
+    ok, motif, data = verdict()
+    assert ok, motif
+    assert data is not None and hashlib.sha256(data).hexdigest() == SHA_AMONT
 
 
 def test_nominal_sha256_identifie_l_artefact_amont():
-    """nominal : l'identité d'octets du blob versionné est celle de l'amont."""
-    asset = resoudre_asset()
+    """nominal : l'identité d'octets du blob VERSIONNÉ est celle de l'amont."""
+    data = blob_versionne()
     broken = blob_casse()
-    assert asset is not None and broken is not None
-    assert asset.read_bytes() == derive(broken, litteral_repr_1_6()), (
+    assert data is not None and broken is not None
+    assert data == derive(broken, litteral_repr_1_6()), (
         "le blob versionné n'est pas la re-substitution exacte du blob cassé"
     )
-    assert hashlib.sha256(asset.read_bytes()).hexdigest() == SHA_AMONT
+    assert hashlib.sha256(data).hexdigest() == SHA_AMONT
 
 
 def test_nominal_census_multiset_exact_et_offsets_de_l_amont():
-    """nominal : census exact (multiset) et offsets du site de rampe/deux MAX."""
-    asset = resoudre_asset()
-    assert asset is not None
-    data = asset.read_bytes()
+    """nominal : census exact (multiset) et offsets du site de rampe/deux MAX,
+    mesurés sur le blob VERSIONNÉ."""
+    data = blob_versionne()
+    assert data is not None
     assert census_litteraux(data) == census_attendu()
     assert offsets_de(data, litteral_repr_1_6().encode()) == [OFFSET_RAMPE_AMONT]
     assert tuple(offsets_de(data, litteral_max_float().encode())) == OFFSETS_MAX_AMONT
 
 
 def test_nominal_rampe_est_la_derivee_du_repr():
-    """nominal : la rampe porte le littéral DÉRIVÉ du repr, valeur flottante incluse."""
-    asset = resoudre_asset()
-    assert asset is not None
-    data = asset.read_bytes()
+    """nominal : la rampe du blob VERSIONNÉ porte le littéral DÉRIVÉ du repr,
+    valeur flottante incluse."""
+    data = blob_versionne()
+    assert data is not None
     assert rampe_snippet_attendu() in data
     assert rampe_litteral(data) == litteral_repr_1_6()
     assert valeur_rampe(rampe_litteral(data)) == valeur_rampe_amont()
 
 
 def test_nominal_node_check_rc0_ou_skip_visible():
-    """nominal : `node --check` rc=0 — renfort ; absent, skip VISIBLE et le
-    verdict reste porté par le census dérivé + le sha256 (Python pur)."""
-    asset = resoudre_asset()
-    assert asset is not None
-    rc, note = node_check(asset)
+    """nominal : `node --check` rc=0 sur les octets du blob VERSIONNÉ —
+    renfort ; absent, skip VISIBLE et le verdict reste porté par le census
+    dérivé + le sha256 (Python pur)."""
+    data = blob_versionne()
+    assert data is not None
+    chemin = _chemin_tmp(data)
+    rc, note = node_check(chemin)
     if rc is None:
         if pytest is None:  # pragma: no cover - mode CLI
             return
@@ -455,7 +789,7 @@ def test_nominal_node_check_rc0_ou_skip_visible():
             "le verdict reste porté par le census dérivé + le sha256 (Python pur)"
             % node_info()
         )
-    assert rc == 0, "node --check rc=%s sur %s (%s)" % (rc, asset.name, note)
+    assert rc == 0, "node --check rc=%s sur le blob versionné (%s)" % (rc, note)
 
 
 def test_nominal_le_derive_sain_est_accepte_et_le_casse_refuse():
@@ -477,6 +811,16 @@ def test_nominal_le_derive_sain_est_octet_pour_octet_l_amont():
     sain = derive(broken, litteral_repr_1_6())
     assert len(sain) == 3572661
     assert hashlib.sha256(sain).hexdigest() == SHA_AMONT
+
+
+def test_nominal_le_worktree_est_aligne_sur_le_blob_versionne():
+    """nominal : le fichier du worktree est EXACTEMENT le blob versionné
+    (`git diff --quiet HEAD -- <chemin>`) — seconde jambe, plus faible."""
+    chemin_wt = resoudre_asset(env={})
+    assert chemin_wt is not None and chemin_wt.exists()
+    aligne, motif = worktree_aligne_sur_blob(chemin_wt)
+    assert aligne, motif
+    assert chemin_wt.read_bytes() == blob_versionne()
 
 
 # ---------------------------------------------------------------- limite ---
@@ -545,6 +889,167 @@ def test_limite_m1_et_m3_ne_sont_pas_interchangeables():
 
 
 # ----------------------------------------------------------------- erreur ---
+# (les cas d'erreur sur le blob VERSIONNÉ sont plus bas, avec les montages
+#  jetables : ils ne dépendent ni du fichier du worktree ni d'une surcharge)
+
+def data_placeholder_offset(data: bytes) -> int:
+    """Offset du placeholder, ou -1 — helper de lisibilité des assertions."""
+    return data.find(PLACEHOLDER)
+
+
+def lancer_le_banc(depot: Path, env: Optional[dict] = None, py: Optional[str] = None):
+    """Exécute la copie du banc dans <depot> en MODE CLI et rend `(rc, sortie)`.
+
+    Anti-récursion : la copie est lancée par son **point d'entrée CLI**
+    (`python3 <copie>`, celui dont l'AC exige le `rc`), JAMAIS par `pytest`.
+    Une relance `pytest` sur la copie rejouerait les cas de montage — donc
+    elle-même — sans borne (mesuré : 9 processus à t+8 s, 14 à t+16 s,
+    EXIT=137). Le sous-processus reçoit en outre `PJ_BANC_INTERNE=1`, qui
+    rend tout montage résiduel `skip` VISIBLE.
+
+    `PJ_MERMAID_ASSET` est retiré : un montage ne peut pas hériter de la
+    surcharge du lanceur, la surcharge est un paramètre EXPLICITE.
+    """
+    py = py or interpreter_python_du_worktree()
+    assert py is not None, "aucun interpréteur capable d'importer pytest"
+    banc = Path(depot) / "tests" / Path(__file__).name
+    assert banc.exists(), "copie du banc absente de %s" % depot
+    environ = dict(os.environ)
+    environ.pop("PJ_MERMAID_ASSET", None)
+    environ.pop("PYTEST_ADDOPTS", None)
+    environ.pop("PYTEST_CURRENT_TEST", None)
+    environ[MARQUEUR_INTERNE] = "1"
+    if env:
+        environ.update(env)
+    r = subprocess.run(
+        [py, str(banc)], cwd=str(depot), capture_output=True, text=True, env=environ,
+    )
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _skip_si_git_absent():
+    if pytest is None:  # pragma: no cover - mode CLI sans pytest
+        return True
+    if os.environ.get(MARQUEUR_INTERNE):
+        # relance interne (une copie du banc exécutée par un cas de montage) :
+        # le montage NE se rejoue PAS ici — sinon récursion sans borne.
+        pytest.skip(
+            "relance interne (%s=1) — montage non rejoué, récursion fermée"
+            % MARQUEUR_INTERNE
+        )
+    if not git_dispo():  # pragma: no cover - environnement sans git
+        pytest.skip("git absent — montage de dépôt jetable non mesurable")
+    return False
+
+
+def test_limite_un_fichier_sain_non_committe_ne_blanchit_pas_le_depot():
+    """limite : montage « HEAD cassé + fichier de travail sain NON COMMITTÉ »
+
+    Dans un dépôt jetable HORS du dépôt de travail, le montage de l'expérience
+    de conv-1 est reconstitué par référence git : le banc y ÉCHOUE (rc≠0) en
+    nommant le blob VERSIONNÉ fautif — il n'est plus vert sur un dépôt dont
+    l'asset publié ne parse pas.
+    """
+    if _skip_si_git_absent():
+        return
+    sain = blob_versionne()
+    assert sain is not None
+    with tempfile.TemporaryDirectory(prefix="pj-mermaid-montage-") as racine:
+        depot = creer_depot_jetable(racine, parent=str(REPO))
+        assert ref_oid(REF_VERDICT, depot) is not None
+        assert oid_blob(str(CHEMIN_ASSET), depot) == BLOB_CASSE
+        copie_du_banc(depot)
+
+        rc_avant, sortie_avant = lancer_le_banc(depot)
+        assert rc_avant != 0, "le banc est VERT sur un dépôt dont l'asset versionné est cassé"
+
+        # le fichier de travail est écrasé par les octets sains, SANS commit :
+        # c'est exactement le contournement mesuré par conv-1.
+        remplacer_hors_commit(depot, sain)
+        r = subprocess.run(["git", "status", "--short"], cwd=str(depot),
+                           capture_output=True, text=True)
+        assert "M bridge/%s" % NOM_ASSET in r.stdout, r.stdout
+        assert oid_blob(str(CHEMIN_ASSET), depot) == BLOB_CASSE
+
+        rc_apres, sortie_apres = lancer_le_banc(depot)
+        assert rc_apres != 0, (
+            "un fichier sain NON COMMITTÉ blanchit le dépôt — le banc ne prouve "
+            "pas le blob versionné:\n%s" % sortie_apres
+        )
+        assert "worktree ≠ blob" in sortie_apres.splitlines()[-1] or \
+            (not worktree_aligne_sur_blob(depot / CHEMIN_ASSET, depot)[0]), sortie_apres
+        assert SHA_CASSE[:16] in sortie_apres or "${DISCORD_ID}" in sortie_apres, sortie_apres
+
+
+def test_limite_la_surcharge_ne_remplace_jamais_le_verdict_du_blob():
+    """limite : `PJ_MERMAID_ASSET` pointant un fichier NON versionné (sain)
+    ne peut pas verdir un dépôt dont le blob versionné est cassé — la
+    surcharge est une jambe paramétrée, jamais le mode par défaut du verdict."""
+    if _skip_si_git_absent():
+        return
+    sain = blob_versionne()
+    assert sain is not None
+    with tempfile.TemporaryDirectory(prefix="pj-mermaid-surcharge-") as racine:
+        depot = creer_depot_jetable(racine, parent=str(REPO))
+        copie_du_banc(depot)
+        hors_depot = Path(racine) / "hors-depot.js"
+        hors_depot.write_bytes(sain)
+        assert not str(hors_depot).startswith(str(depot))
+
+        rc_defaut, sortie_defaut = lancer_le_banc(depot)
+        rc_surcharge, sortie_surcharge = lancer_le_banc(
+            depot, env={"PJ_MERMAID_ASSET": str(hors_depot)}
+        )
+        assert rc_defaut != 0, sortie_defaut
+        assert rc_surcharge != 0, (
+            "la surcharge PJ_MERMAID_ASSET a blanchi le blob versionné cassé:\n%s"
+            % sortie_surcharge
+        )
+        assert "SURCHARGE" not in sortie_surcharge or "REFUSÉ" in sortie_surcharge, \
+            sortie_surcharge
+
+        # et sur le dépôt sain, la surcharge s'AJOUTE au verdict (jambe active)
+        assert SHA_AMONT[:16] in sortie_surcharge
+
+    # pendant positif, mesuré sur l'arbre SAIN du worktree : la jambe de
+    # surcharge est ACTIVE et NOMMÉE (elle ne disparaît pas silencieusement
+    # quand elle est saine — sinon la jambe paramétrée serait indistinguable
+    # d'une jambe absente).
+    sain_ici = blob_versionne()
+    assert sain_ici is not None
+    td, chemin_hors = ecrire_tmp(sain_ici, "surcharge-saine.js")
+    try:
+        ok_sans, motif_sans, _ = verdict()
+        ok_avec, motif_avec, _ = verdict(env={"PJ_MERMAID_ASSET": str(chemin_hors)})
+        assert ok_sans and ok_avec, motif_avec
+        assert MARQUEUR_SURCHARGE not in motif_sans, motif_sans
+        assert MARQUEUR_SURCHARGE in motif_avec, motif_avec
+        assert sain_ici == Path(chemin_hors).read_bytes()
+    finally:
+        td.cleanup()
+
+
+def test_erreur_le_blob_versionne_casse_est_refuse_meme_worktree_sain():
+    """erreur : HEAD porte le blob cassé `c3922946` et un fichier de worktree
+    sain — le banc ÉCHOUE (rc≠0), nomme `bridge/mermaid.min.js` ET l'identité
+    du blob versionné, et liste le motif du refus (placeholder / census)."""
+    if _skip_si_git_absent():
+        return
+    sain = blob_versionne()
+    assert sain is not None
+    with tempfile.TemporaryDirectory(prefix="pj-mermaid-erreur-") as racine:
+        depot = creer_depot_jetable(racine, parent=str(REPO))
+        # le montage du scénario : worktree sain, blob versionné cassé
+        remplacer_hors_commit(depot, sain)
+        copie_du_banc(depot)
+
+        rc, sortie = lancer_le_banc(depot)
+        assert rc != 0, sortie
+        assert "bridge/%s" % NOM_ASSET in sortie, sortie
+        assert BLOB_CASSE[:12] in sortie, sortie
+        assert REF_VERDICT in sortie, sortie
+        assert "${DISCORD_ID}" in sortie or "census non conforme" in sortie, sortie
+
 
 def test_erreur_le_blob_casse_est_refuse_en_nommant_fichier_et_raison():
     """erreur : le blob cassé (placeholder @16137) est refusé, fichier + raison
@@ -562,8 +1067,8 @@ def test_erreur_le_blob_casse_est_refuse_en_nommant_fichier_et_raison():
 
 
 def test_erreur_le_cli_nomme_le_defaut_et_sort_en_rc1():
-    """erreur : le banc lui-même (mode CLI) ÉCHOUE sur le blob cassé, rc=1,
-    en nommant le fichier et la raison."""
+    """erreur : le banc lui-même (mode CLI) ÉCHOUE (rc≠0) sur un blob cassé
+    PASSÉ EN SURCHARGE, en nommant le fichier et la raison."""
     broken = blob_casse()
     assert broken is not None
     td, chemin = ecrire_tmp(broken, "blob-casse.js")
@@ -579,12 +1084,16 @@ def test_erreur_le_cli_nomme_le_defaut_et_sort_en_rc1():
         td.cleanup()
 
 
-def data_placeholder_offset(data: bytes) -> int:
-    """Offset du placeholder, ou -1 — helper de lisibilité des assertions."""
-    return data.find(PLACEHOLDER)
-
-
-# -------------------------------------------------------------- garde-fous ---
+def test_erreur_le_cli_sans_argument_juge_le_blob_versionne():
+    """erreur : sans argument, le mode CLI lit le blob VERSIONNÉ — il nomme le
+    chemin versionné, l'oid et le commit, et sort rc=0 sur l'arbre sain."""
+    r = subprocess.run([sys.executable, str(Path(__file__).resolve())],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "blob %s:%s" % (REF_VERDICT, CHEMIN_ASSET) in r.stdout, r.stdout
+    assert OID_AMONT[:12] in r.stdout, r.stdout
+    assert (ref_oid(REF_VERDICT) or "")[:12] in r.stdout, r.stdout
+    assert SHA_AMONT in r.stdout, r.stdout
 
 def test_garde_fou_le_census_doit_etre_exact_pas_une_inclusion():
     """garde-fou : la forme « observé ⊆ attendu » ACCEPTE le blob cassé — la
@@ -683,6 +1192,46 @@ def test_garde_fou_aucun_epinlage_d_interpreteur():
     ok_sain, _ = invariant(derive(broken, litteral_repr_1_6()), "sain.js", node_rc=None)
     ok_casse, _ = invariant(broken, "casse.js", node_rc=None)
     assert ok_sain and not ok_casse
+
+
+def test_garde_fou_un_montage_ne_relance_jamais_pytest_sur_la_copie():
+    """garde-fou ANTI-RÉCURSION : un cas de montage ne relance pas pytest.
+
+    Défaut mesuré AVANT ce garde-fou : `lancer_le_banc()` relançait `pytest`
+    sur la copie du banc, laquelle contient les cas de montage — la chaîne de
+    sous-processus n'était pas bornée (9 processus `pytest` à t+8 s, 14 à
+    t+16 s, sortie `EXIT=137` SIGKILL ; c'est la cause des OOM des runs
+    précédents). Deux jambes indépendantes ferment la récursion :
+
+      1. statique — `lancer_le_banc()` ne porte plus de relance `pytest` sur la
+         copie : le littéral du geste est reconstruit par concaténation (une
+         aiguille littérale se trouverait elle-même), et le point d'entrée CLI
+         est exigé ;
+      2. dynamique — sous `PJ_BANC_INTERNE=1`, `_skip_si_git_absent()` rend
+         tout montage `skip`, donc une relance résiduelle serait inerte.
+    """
+    source = Path(__file__).read_text()
+    aiguille = "-m " + "pytest"
+    assert aiguille not in source, (
+        "un `%s` subsiste dans le banc : la relance pytest d'un montage sur la "
+        "copie du banc rejouerait les montages eux-mêmes, sans borne "
+        "(mesuré : EXIT=137 par OOM)" % aiguille
+    )
+    assert 'subprocess.run(\n        [py, str(banc)]' in source, \
+        "lancer_le_banc() doit passer par le point d'entrée CLI de la copie"
+    assert "MARQUEUR_INTERNE" in source and "PJ_BANC_INTERNE" in source
+
+    # jambe dynamique : le marqueur de relance interne rend le montage inerte
+    env = dict(os.environ)
+    env[MARQUEUR_INTERNE] = "1"
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-rs", "-p", "no:cacheprovider",
+         "-k", "non_committe", str(Path(__file__).resolve())],
+        cwd=str(REPO), capture_output=True, text=True, env=env, timeout=300,
+    )
+    assert "skipped" in r.stdout, r.stdout
+    assert "relance interne" in r.stdout, r.stdout
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def test_garde_fou_le_verdict_ne_depend_pas_de_l_interpreteur_ambient():
