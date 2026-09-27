@@ -686,3 +686,25 @@ def test_couverture_main_repo_sans_org_mais_var_presente(w, tmp_path, monkeypatc
     monkeypatch.setenv("PJ_WATCH_REPOS", "   ")
     assert w.main([]) == 2
     assert "REPOS" in capsys.readouterr().err
+
+
+def test_production_dry_run_ne_cree_rien(w, cfg, monkeypatch):
+    """LIMITE — `--dry-run` n'écrit NI carte NI issue : il annonce ce qu'il ferait.
+
+    Une production non gardée ferait du dry-run un mode destructeur — l'inverse de
+    sa promesse : il créerait de vraies issues GitHub en prétendant « ne rien faire ».
+    """
+    cards = [{"board": BOARD, "task_id": TASK, "title": "t", "issue": PARENT, "reason": "r"}]
+    monkeypatch.setattr(w, "blocked_cards", lambda cfg, board=None: cards)
+    run = FakeProd(children=[], comments=[], create_out="")
+    st = w.watch_repo("hermes-workflow", cfg=cfg, dry=True, runner=run)
+    assert run.create_calls() == [], "le dry-run ne crée AUCUNE issue"
+    assert run.reopen_calls() == [], "le dry-run ne rouvre AUCUNE issue"
+    assert run.gh_comment_calls() == [], "le dry-run ne commente AUCUNE issue"
+    assert st["children"] == [{"task": TASK, "child": None, "effect": "would_create"}]
+
+    # et sur un re-blocage, il ANNONCE la réouverture sans la faire
+    run2 = FakeProd(children=[_child(body=f"carte: {BOARD}/{TASK}\n")], comments=[])
+    st2 = w.watch_repo("hermes-workflow", cfg=cfg, dry=True, runner=run2)
+    assert run2.reopen_calls() == []
+    assert st2["children"] == [{"task": TASK, "child": CHILD, "effect": "would_reopen"}]

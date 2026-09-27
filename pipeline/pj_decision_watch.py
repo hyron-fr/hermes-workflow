@@ -595,8 +595,20 @@ def watch_repo(repo: str, *, cfg: WatchConfig, dry=False, verbose=False,
     # quoi le `/ok` de l'humain n'a nulle part où être écrit : c'est le maillon qui
     # rend la décision atteignable (Option 1, issue #5). La création est idempotente
     # par la ligne canonique, donc un re-blocage rouvre la MÊME enfant.
+    #
+    # `--dry-run` n'écrit RIEN — ni carte, ni issue GitHub : il annonce ce qu'il
+    # ferait. Une production non gardée ferait de `--dry-run` un mode destructeur,
+    # c'est-à-dire l'inverse de sa promesse.
     if cfg.board:
         for card in blocked_cards(cfg):
+            if dry:
+                existing = find_decision_child(cfg, repo, card["issue"], card["task_id"],
+                                               runner=runner)
+                stats.setdefault("children", []).append(
+                    {"task": card["task_id"],
+                     "child": existing,
+                     "effect": "would_reopen" if existing else "would_create"})
+                continue
             res = ensure_decision_child(cfg, repo, parent=card["issue"], board=card["board"],
                                         task_id=card["task_id"], title=card["title"],
                                         reason=card["reason"], runner=runner)
