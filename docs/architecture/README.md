@@ -26,6 +26,10 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 
 _(peuplé par la carte `doc-k` : chaque ADR sous `decisions/` doit être référencé ici, sinon `pj_docs_lint.py` le signale orphelin.)_
 
+## Règles
+
+- [[declared-delta-rule]] — What the seal guard protects: the declared-delta rule (5 testable points).
+
 ## Composants
 
 - [[pj-decision]] — Core pur de décision `/ok` (issue #5, slice 4) : calcule la décision portée par un commentaire, ne l'applique jamais.
