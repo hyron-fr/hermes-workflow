@@ -47,12 +47,18 @@ the sources in the same worktree).
 Measured interaction carried here (it belongs to `conv-5`'s arbitration)
 -----------------------------------------------------------------------
 
-`tests/test_issue2_plate_reproducible.py` (slice 1) asserts the live tree against the
-ratified plate's `plate-ledger` per-file numbers. The translation of this slice
-therefore makes 4 of its 23 cases red until the ledger entry for slice 5 is updated in
-the same commit. `test_erreur_une_slice_deja_traduite_est_nommee_et_non_comptee_...`
-executes that pair on a throwaway clone and asserts the guard FIRES AND NAMES the
-files, so the arbitration is argued on a measurement rather than on a guess.
+`tests/test_issue2_plate_reproducible.py` (slice 1) asserted the live tree against the
+ratified plate's `plate-ledger` per-file numbers. The translation of this slice therefore
+made 4 of its 23 cases red until the ledger entry for slice 5 was updated in the same
+commit — the premise this bank wrote down when it was RED. SUPERSEDED, 2026-09-26: the
+plate-bench was re-architected to judge the FROZEN seal instead of the live tree, and the
+slice-5 ledger amendment ships in the same commit as the translation, so translating the
+slice no longer turns the bench red — the bench judges the DECLARED delta. Case 5
+(`test_erreur_une_slice_deja_traduite_...`) is re-scoped on conv-5 to assert that the
+guard STILL fires: it strips the slice-5 amendment entry from a working-tree clone and
+requires the bench to red and name slice 5 — so the arbitration (ledger update belongs to
+the same commit as the translation) stays argued on a measurement, under the new
+semantics.
 """
 import hashlib
 import json
@@ -204,6 +210,38 @@ def offenders(rel):
         if len(toks) >= SEUIL_LEXICAL:
             hits.append((n, toks, line.strip()))
     return hits
+
+
+def strip_amendment_slice(clone_dir, k):
+    """Remove from the CLONE's working-tree ledger the amendment entries whose
+    `slices` list contains `k` — the measured UNDECLARED mutation case 5 exercises.
+
+    Measured, not hand-parsed by eye: the ledger is round-tripped through JSON, the
+    entries are filtered, and the strip is proven by re-reading (the entry count must
+    drop by exactly the number of removed entries). The mutation touches the CLONE's
+    file only — never the parent's `docs/**` (peer perimeter, measured trap of 2026-09-20:
+    a `git checkout` aimed at the parent restored files in the PARENT tree).
+    """
+    plate = Path(clone_dir) / PLATE_REL
+    txt = plate.read_text(encoding="utf-8")
+    m = LEDGER_RE.search(txt)
+    assert m, "no `plate-ledger` machine block in the clone's %s" % PLATE_REL
+    ledger = json.loads(m.group("json"))
+    amend = (ledger.get("provenance") or {}).get("amendments") or []
+    keep = [a for a in amend
+            if not (isinstance(a, dict) and k in (a.get("slices") or []))]
+    assert len(keep) < len(amend), (
+        "nothing to strip: no amendment entry declares slice %d in %s — the mutation "
+        "premise no longer holds" % (k, PLATE_REL))
+    ledger["provenance"]["amendments"] = keep
+    plate.write_text(
+        txt[:m.start("json")] + json.dumps(ledger, indent=2, ensure_ascii=False)
+        + txt[m.end("json"):], encoding="utf-8")
+    m2 = LEDGER_RE.search(plate.read_text(encoding="utf-8"))
+    assert m2, "the re-read of the clone's ledger failed after the strip"
+    check = json.loads(m2.group("json"))
+    assert len(check["provenance"]["amendments"]) == len(keep), \
+        "strip not applied in the clone's ledger"
 
 
 def ledger():
@@ -516,33 +554,53 @@ def test_erreur_un_fichier_oublie_est_nomme_avec_sa_ligne_et_le_scan_sort_1(clon
 
 
 def test_erreur_une_slice_deja_traduite_est_nommee_et_non_comptee_comme_rouge(clone):
-    """Error, the pair applied INSIDE the clone: pre-state from `origin/dev`, then the
-    slice is translated. The clone's tip is deliberately NOT relied on, so this case
-    replays identically before and after `dev-5` commits — a bank that only worked on a
-    French tree would break on the very commit it is supposed to bless.
+    """Error, replayed INSIDE the clone: the undeclared-delta guard must still fire.
 
-    It restores the three files from `origin/dev` (where they really are French),
-    verifies that pre-state carries accented lines (non-vacuity: a slice with none would
-    make the whole RED spurious), strips the diacritics in place, and then asserts, in
-    the SAME run:
+    History, measured (conv-5, 2026-09-27): when this case was written it asserted that
+    translating the slice turns the slice-1 bench red until the ledger is updated in the
+    same commit — true under the pre-2026-09-26 bench, which asserted the live tree
+    against the ratified ledger. The bench was re-architected (9c4ad14, t_887e9508) to
+    judge the FROZEN seal: its guard compares only the working-tree PLATE against the
+    seal and tolerates a divergence ENTIRELY declared in `provenance.amendments[]`
+    (guard re-margined on t_6e730cef). Two consequences, both measured:
 
-    - the scan turns GREEN on the slice (rc 0) — the RED of this card is reachable;
-    - the slice-1 bench (`tests/test_issue2_plate_reproducible.py`) turns RED and NAMES
-      the slice's files, because the ratified plate's ledger still declares their
-      accented lines. That pair is the arbitration `conv-5` has to carry: the ledger
-      update belongs to the same commit as the translation.
+    - the slice-5 amendment ships in the same commit as the translation (dd689ed), so
+      the delivered tree is GREEN — and the SOUL files themselves can no longer turn the
+      bench red, because the seal's per-file numbers are a snapshot, not a live assertion
+      on the prose;
+    - the mutation the guard actually watches is the PLATE: strip the slice-5 amendment
+      entry and the guard must red and name slice 5.
+
+    First re-scope attempt (same run, conv-5) asserted the guard on the delivered tree
+    alone (bench green, then red after the strip, no intermediate mutation applied to
+    anything the guard watches): proven TAUTOLOGICAL — with the guard neutralized the
+    case stayed green, i.e. it could not fail. Rejected; the mutation below is the
+    non-vacuous form, validated end-to-end in a throwaway clone before commit.
+
+    Assertions, in the SAME run:
+    - witness: `origin/dev` pre-state still carries the 145 accented lines (the state
+      this card's historical RED was measured against — non-vacuity);
+    - the scan turns GREEN on the slice's delivered files (rc 0, silent) — the scan
+      contract still holds on the tree under test;
+    - NEGATIVE witness: the slice-1 bench is GREEN on the untouched clone — the
+      DECLARED delta is accepted, so the RED below is caused by the strip and cannot be
+      a bench defect;
+    - MUTATION: the slice-5 amendment entry is stripped from the CLONE's working-tree
+      ledger (JSON round-tripped, re-read, entry count proven to drop) — never the
+      parent's `docs/**` (peer perimeter, measured trap of 2026-09-20);
+    - the slice-1 bench turns RED and NAMES slice 5 as diverging without an amendment —
+      the guard still fires, so a commit that ships the translation WITHOUT the ledger
+      update is caught.
     """
-    import unicodedata
+    p = _run([sys.executable, "-m", "pytest",
+              "tests/test_issue2_plate_reproducible.py", "-q"],
+             cwd=clone["dir"])
+    witness_green = out_of(p)
+    assert p.returncode == 0, (
+        "NEGATIVE witness failed: on the untouched clone (delivered tree + DECLARED "
+        "slice-5 amendment) the slice-1 bench must be GREEN — rc=%d\n%s"
+        % (p.returncode, witness_green[-2000:]))
 
-    map_ = {"œ": "oe", "æ": "ae", "Œ": "OE", "Æ": "AE"}
-    # The pre-state is READ from the parent repo (`origin/dev` is where the slice really
-    # is French) and WRITTEN into the fixture. Two traps closed, both measured:
-    # - `git -C REPO checkout ...` (first version) restored the French files in the PARENT
-    #   tree, i.e. wrote outside `tests/**` — in a shared worktree that is a write into the
-    #   peer's perimeter, and it made every later run judge a tree the bank had rewritten;
-    # - `git -C clone checkout origin/dev` (second version) failed with `référence
-    #   invalide: origin/dev`, because a clone of a clone does not carry remote-tracking
-    #   refs: only `refs/heads/*` are mapped. Measured with `for-each-ref` on the fixture.
     pre_state = {}
     for rel in SLICE_FILES:
         p = _run(["git", "-C", str(REPO), "show", "origin/dev:%s" % rel])
@@ -552,52 +610,35 @@ def test_erreur_une_slice_deja_traduite_est_nommee_et_non_comptee_comme_rouge(cl
 
     pre = sum(len(accented_lines(t.splitlines())) for t in pre_state.values())
     assert pre > 0, (
-        "non-vacuity witness: `origin/dev` carries no accented line in the slice, so the "
-        "RED would be spurious")
+        "non-vacuity witness: `origin/dev` carries no accented line in the slice, so "
+        "the historical RED this card blessed would have been spurious")
     print("witness: origin/dev pre-state carries %d accented lines over %d files"
           % (pre, len(SLICE_FILES)))
 
-    for rel in SLICE_FILES:
-        cible = clone["dir"] / rel
-        cible.write_text(pre_state[rel], encoding="utf-8")
-
-    for rel in SLICE_FILES:
-        cible = clone["dir"] / rel
-        avant = sha256(cible)
-        txt = cible.read_text(encoding="utf-8")
-        n_avant = len(accented_lines(txt.splitlines()))
-        out = []
-        for ch in txt:
-            if ch in map_:
-                out.append(map_[ch])
-            elif ch in ACCENTS:
-                d = unicodedata.normalize("NFD", ch)
-                out.append("".join(c for c in d if not unicodedata.combining(c)))
-            else:
-                out.append(ch)
-        cible.write_text("".join(out), encoding="utf-8")
-        apres = sha256(cible)
-        n_apres = len(accented_lines(cible))
-        print("witness: %s sha256 %s -> %s ; accented lines %d -> %d"
-              % (rel, avant[:12], apres[:12], n_avant, n_apres))
-        assert avant != apres, "mutation NOT applied: %s" % rel
-        assert n_apres == 0, "the strip left diacritics in %s: %d" % (rel, n_apres)
-
     p = scan(SLICE_FILES, cwd=clone["dir"])
     assert p.returncode == 0, (
-        "on a translated slice the scan must be GREEN (rc 0), got %d\n"
-        + resume(p, "scan(slice traduite)"))
+        "on the delivered slice the scan must be GREEN (rc 0), got %d\n"
+        + resume(p, "scan(slice livree)"))
+    assert p.stdout.strip() == "" and p.stderr.strip() == "", (
+        "rc 0 must be SILENT (stdout AND stderr empty)\n" + resume(p, "scan(slice livree)"))
+
+    strip_amendment_slice(clone["dir"], SLICE_K)
+    print("witness: slice-5 amendment stripped from the CLONE's working-tree ledger "
+          "(UNDECLARED mutation)")
 
     bench = _run([sys.executable, "-m", "pytest",
                   "tests/test_issue2_plate_reproducible.py", "-q"], cwd=clone["dir"])
     sortie = out_of(bench)
     assert bench.returncode != 0, (
-        "MEASURED INTERACTION: the slice-1 bench asserts the live tree against the "
-        "ratified plate's ledger, so a translated slice must turn it red until the "
-        "ledger is updated. It stayed green — the guard did not fire.\n%s"
+        "the guard did NOT fire: with the slice-5 amendment stripped from the "
+        "working-tree ledger the slice-1 bench must be RED — it stayed green:\n%s"
         % sortie[-3000:])
-    nommes = [rel for rel in SLICE_FILES if rel in sortie]
-    assert nommes, (
-        "the guard must NAME the files whose accented lines no longer match the ledger; "
-        "none of %r appears in its output:\n%s" % (SLICE_FILES, sortie[-3000:]))
-    print("witness: slice-1 bench rc=%d, names %r" % (bench.returncode, nommes))
+    assert re.search(r"slice %d\b" % SLICE_K, sortie), (
+        "the guard must NAME slice %d as diverging without an amendment; its output "
+        "does not:\n%s" % (SLICE_K, sortie[-3000:]))
+    assert "amendments" in sortie, (
+        "the guard's verdict must attribute the red to the missing "
+        "`provenance.amendments[]` declaration:\n%s" % sortie[-3000:])
+    print("witness: slice-1 bench rc=%d on the undeclared delta; slice %d named "
+          "(guard fires under the re-architected seal semantics)"
+          % (bench.returncode, SLICE_K))
