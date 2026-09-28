@@ -22,7 +22,9 @@ protocoles:
   - litteral: "Importé depuis"
     famille: protocole
     lecteur: "pipeline/pj_pipeline_deployer.py:270"
-    aussi_lu_par: "pipeline/gh_kanban_bridge.py:308"
+    # Re-anchored on the origin/dev base (issue #2 rebase, 2026-09-28): line 308 before the
+    # dev advance (issues #1/#4/#5/#7), line 430 on the new base (same rogue-cards guard).
+    aussi_lu_par: "pipeline/gh_kanban_bridge.py:430"
     pourquoi: "bridge marker read by the importer; translating it makes the bridge silent, with no error"
   - litteral: "ROOM:"
     famille: protocole

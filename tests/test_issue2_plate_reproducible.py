@@ -96,7 +96,10 @@ TITRES_EN = [
 PROTOCOLES_GELES = {
     "Importé depuis": [
         ("pipeline/pj_pipeline_deployer.py", 270),
-        ("pipeline/gh_kanban_bridge.py", 308),
+        # Re-ancré sur la base origin/dev (rebase issue #2, 28/09) : le marqueur vivait à
+        # la ligne 308 (check_no_rogue_cards) avant l'avancement de dev (issues #1/#4/#5/#7) ;
+        # il est à la ligne 430 sur la nouvelle base (même rôle : le garde-fou rogue-cards).
+        ("pipeline/gh_kanban_bridge.py", 430),
     ],
     "ROOM:": [
         ("pipeline/pj_room_keeper.py", 76),
