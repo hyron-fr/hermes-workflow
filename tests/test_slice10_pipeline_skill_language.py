@@ -929,10 +929,18 @@ def test_nominal_the_reference_revision_is_the_immutable_adding_commit_not_a_bra
     # negative control, SAME checks, other candidate: a BRANCH must fail them. Without this
     # the guard would be a sentence, not a control — and the failure mode it exists for
     # (measuring a moving ref) is invisible precisely because it is green.
-    branche_est_ancetre = _run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
-                                "origin/dev", "HEAD"]).returncode == 0
+    #
+    # Re-ancrage (rebase issue #2 sur origin/dev, 2026-09-28, carte t_8989cda2) : le sujet
+    # d'origine, `origin/dev`, EST devenu un ancêtre de HEAD depuis que la branche est
+    # rebasée sur le tip de dev (adb52c3) — le contrôle négatif n'avait plus de sujet.
+    # `origin/main` remplace `origin/dev` : branche qui avance, non ancêtre de HEAD (mesuré :
+    # merge-base --is-ancestor rc=1), et le garde-fou reste discriminant — un ref qui bouge
+    # doit échouer aux mêmes vérifications qu'un commit immuable.
+    branche_est_ancetre = _run([
+        "git", "-C", str(REPO), "merge-base", "--is-ancestor",
+        "origin/main", "HEAD"]).returncode == 0
     assert not branche_est_ancetre, (
-        "`origin/dev` IS an ancestor of HEAD (%s): the negative control of this case has no "
+        "`origin/main` IS an ancestor of HEAD (%s): the negative control of this case has no "
         "subject any more — pick another branch to prove the guard discriminates, because "
         "as written it would accept the moving ref" % mb[:12])
 
@@ -941,7 +949,7 @@ def test_nominal_the_reference_revision_is_the_immutable_adding_commit_not_a_bra
           % (ref_label(), len(ref), mb[:12], delta_ref["on_this_file"]))
     print("    frozen literals cited at the reference revision: %r — NOT a non-zero "
           "requirement, a count to preserve" % delta_ref["frozen_literals_cited_at_ref"])
-    print("    negative control (same checks, the moving ref): `origin/dev` is an ancestor "
+    print("    negative control (same checks, the moving ref): `origin/main` is an ancestor "
           "of HEAD = %s -> the guard REFUSES it, so the pin is a control and not a sentence"
           % branche_est_ancetre)
 

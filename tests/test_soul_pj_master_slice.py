@@ -84,9 +84,18 @@ TITRES_FR_UNIQUES = (
 
 # Documents tracked in this tree that are ALREADY English: the calibration set of the
 # unaccented-French detector below. The detector is accepted only if it flags ZERO of
-# their lines; a detector that fires on 272 lines of real English is not a detector.
+# their lines; a detector that fires on real English is not a detector (566 lines
+# measured on the re-anchored set of 2026-09-28, card t_8989cda2).
+# Re-ancrage (rebase issue #2 sur origin/dev, 2026-09-28, carte t_8989cda2) : le MOC
+# `docs/architecture/README.md` portait 12 lignes françaises à la base origin/dev (les
+# entrées des issues #1/#4/#5/#7, hors diff de l'issue #2) — il n'était plus un document
+# « déjà écrit en anglais » au sens du banc, et le faisait rougir par construction. Le
+# document de cadrage du slice 4 (`docs/architecture/components/pj-lang-lint.md`) et les
+# deux documents racines traduits par le slice 3 (`README.md`, `CONTRIBUTING.md`) le
+# remplacent dans le jeu de calibration. Mesuré : 0 faux-positif sur chacun, 566 lignes.
 CALIBRATION_REFS = (
-    "docs/architecture/README.md",
+    "README.md",
+    "CONTRIBUTING.md",
     "docs/architecture/components/pj-lang-lint.md",
     "docs/architecture/context/issue-2.md",
     "docs/functional/README.md",
