@@ -1,0 +1,51 @@
+# pj_lang_lint — frozen literals (machine protocols), verbatim.
+#
+# Read by pipeline/pj_lang_lint.py. Each entry declares ONE literal that must never
+# be translated, and cites the line that reads it, so the declaration can be re-read
+# by the script it names instead of being taken on trust.
+#
+# Scope, deliberately narrow: only the 2 machine protocols are frozen. The section
+# titles of the card contract and the linter's own messages are TRANSLATED by
+# slice 2 (human decision of 2026-09-20: the gate labels move to English and the
+# linter becomes bilingual) — listing them here would freeze a superseded call.
+#
+# Granularity is the SPAN, never the whole line: English prose that quotes a protocol
+# below stays clean, while a diacritic elsewhere on the same line is still reported.
+#
+# Every ACCENTED string declared here is added by the scan (and by the bench) to the
+# spans it removes, so this file must not carry accented PROSE: an accented word in a
+# comment would silently widen the exemptions. English prose only — the sole accented
+# strings are the frozen literals themselves.
+version: 1
+
+protocoles:
+  - litteral: "Importé depuis"
+    famille: protocole
+    lecteur: "pipeline/pj_pipeline_deployer.py:270"
+    # Re-anchored on the origin/dev base (issue #2 rebase, 2026-09-28): line 308 before the
+    # dev advance (issues #1/#4/#5/#7), line 430 on the new base (same rogue-cards guard).
+    aussi_lu_par: "pipeline/gh_kanban_bridge.py:430"
+    pourquoi: "bridge marker read by the importer; translating it makes the bridge silent, with no error"
+  - litteral: "ROOM:"
+    famille: protocole
+    lecteur: "pipeline/pj_room_keeper.py:76"
+    pourquoi: "machine-only room marker, anchored anywhere in the body, no human reader"
+
+# ----------------------------------------------------------------------------- hors_corpus
+#
+# Whole-file exemptions (card t_54a5f661, human decision of 2026-09-26, option 1):
+# English documents whose accented lines are legitimate quotations of the FROZEN
+# French contract, declared here — file by file, with the reason — instead of being
+# translated. Each entry names the file and why it stays out of the corpus.
+#
+# This section is FILE-level (the whole file is out of the scan corpus), not
+# span-level: it is a different kind of declaration from `protocoles` above, and a
+# whole-tree run stays rc=0 and SILENT only while every remaining violation is
+# either a frozen span or a file declared here.
+hors_corpus:
+  - fichier: "docs/architecture/context/issue-2.md"
+    pourquoi: "issue #2 specification (frozen French contract): BDD keywords and section titles quoted verbatim from the card contract"
+  - fichier: "docs/architecture/context/issue-2-datation.md"
+    pourquoi: "bench dating rule (decision 3 of arbitration t_ca894fd4): the accented lines are the two frozen uppercase verdict keys, quoted verbatim from the note"
+  - fichier: "docs/architecture/README.md"
+    pourquoi: "vault MOC, already English and declared out of the translation corpus by the plate ledger"

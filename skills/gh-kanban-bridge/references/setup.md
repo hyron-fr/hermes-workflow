@@ -1,15 +1,15 @@
-# Setup : pont GitHub ↔ kanban + bot Discord gh-triage
+# Setup: GitHub ↔ kanban bridge + gh-triage Discord bot
 
-Déploiement sur une nouvelle instance Hermes. **Une seule commande** câble
-tout : helpers, profil, board, labels, crons. Idempotent — relancer ne
-duplique rien.
+Deployment on a new Hermes instance. **A single command** wires
+everything: helpers, profile, board, labels, crons. Idempotent — re-running
+duplicates nothing.
 
-## Prérequis
+## Prerequisites
 
-- Hermes Agent installé (`hermes` dans le PATH)
-- `gh` CLI authentifié sur le repo cible (`gh auth login`)
-- Un bot Discord créé et invité sur le serveur cible (token à mettre dans
-  le `.env` du profil, voir §Secrets)
+- Hermes Agent installed (`hermes` on the PATH)
+- `gh` CLI authenticated on the target repo (`gh auth login`)
+- A Discord bot created and invited to the target server (token to put in
+  the profile's `.env`, see §Secrets)
 
 ## Installation
 
@@ -17,151 +17,151 @@ duplique rien.
 bash <skill_dir>/scripts/setup.sh
 ```
 
-Ce que fait `setup.sh` (dans l'ordre) :
+What `setup.sh` does (in order):
 
-1. Vérifie `gh auth status` (exit 1 si non authentifié)
-2. Copie les 4 helpers `scripts/*.py` vers `${HERMES_WORKFLOW}/pipeline/`
-3. Crée le profil `gh-triage` (si absent) + copie `gh_triage_poll.py` dans
-   son dossier `scripts/`
-4. Crée le board kanban (si absent)
-5. Crée les labels GitHub `kanban` et `triage` (si absents)
-6. Crée le cron `gh-kanban-bridge` (no-agent, `*/5`) si absent
-7. Crée le cron `gh-triage-poll` (profil gh-triage, agent) si absent
+1. Checks `gh auth status` (exit 1 when not authenticated)
+2. Copies the 4 helpers `scripts/*.py` to `${HERMES_WORKFLOW}/pipeline/`
+3. Creates the `gh-triage` profile (if absent) + copies `gh_triage_poll.py` into
+   its `scripts/` folder
+4. Creates the kanban board (if absent)
+5. Creates the GitHub labels `kanban` and `triage` (if absent)
+6. Creates the cron `gh-kanban-bridge` (no-agent, `*/5`) if absent
+7. Creates the cron `gh-triage-poll` (profile gh-triage, agent) if absent
 
-Chaque étape est gardée par un test d'existence : relancer `setup.sh` ne
-crée aucun doublon (mêmes crons, labels, board).
+Every step is guarded by an existence test: re-running `setup.sh` creates
+no duplicate (same crons, labels, board).
 
-## Configuration (env, surchargeable)
+## Configuration (env, overridable)
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Role |
 |---|---|---|
-| `GH_REPO` | hyron-fr/hermes-experiment | repo cible |
-| `KANBAN_BOARD` | hermes-experiment | board kanban |
-| `KANBAN_ASSIGNEE` | default | profil worker |
-| `DISCORD_GUILD_ID` | ${DISCORD_ID} | serveur Discord |
-| `DISCORD_CHANNEL_ID` | ${DISCORD_ID} | channel de triage |
+| `GH_REPO` | hyron-fr/hermes-experiment | target repo |
+| `KANBAN_BOARD` | hermes-experiment | kanban board |
+| `KANBAN_ASSIGNEE` | default | worker profile |
+| `DISCORD_GUILD_ID` | ${DISCORD_ID} | Discord server |
+| `DISCORD_CHANNEL_ID` | ${DISCORD_ID} | triage channel |
 
-Exemple :
+Example:
 
 ```bash
 GH_REPO=acme/prod KANBAN_BOARD=prod KANBAN_ASSIGNEE=worker \
   bash <skill_dir>/scripts/setup.sh
 ```
 
-## Étapes manuelles restantes (hors setup.sh)
+## Remaining manual steps (outside setup.sh)
 
-`setup.sh` ne gère PAS les secrets ni le gateway Discord — à faire à la main :
+`setup.sh` does NOT handle the secrets or the Discord gateway — do them by hand:
 
-### Secrets du profil (`~/.hermes/profiles/gh-triage/.env`)
+### Profile secrets (`~/.hermes/profiles/gh-triage/.env`)
 
 ```
-DISCORD_BOT_TOKEN=<token du bot>
-DISCORD_FREE_RESPONSE_CHANNELS=<channel_id>     # pas de @mention requis
-DISCORD_ALLOWED_USERS=<discord_user_id>          # OBLIGATOIRE (sinon silence)
+DISCORD_BOT_TOKEN=<bot token>
+DISCORD_FREE_RESPONSE_CHANNELS=<channel_id>     # no @mention required
+DISCORD_ALLOWED_USERS=<discord_user_id>          # MANDATORY (otherwise silence)
 ```
 
-Récupérer l'ID Discord de l'utilisateur : clic droit sur le pseudo →
-"Copy User ID" (mode développeur activé).
+Get the user's Discord ID: right-click the nickname →
+"Copy User ID" (developer mode enabled).
 
 ```bash
 chmod 600 ~/.hermes/profiles/gh-triage/.env
 ```
 
-### Gateway du profil (bot Discord)
+### Profile gateway (Discord bot)
 
 ```bash
 hermes -p gh-triage config set discord.allowed_guilds "[<guild_id>]"
 hermes -p gh-triage config set discord.allowed_channels <channel_id>
-hermes -p gh-triage gateway install      # service systemd user
+hermes -p gh-triage gateway install      # systemd user service
 journalctl --user -u hermes-gateway-gh-triage | grep "discord connected"
 ```
 
-### Gateway principal (dispatcher kanban)
+### Main gateway (kanban dispatcher)
 
 ```bash
-hermes gateway install                   # si pas déjà fait
-hermes kanban --board <board-slug> list  # vérifier la visibilité
+hermes gateway install                   # if not already done
+hermes kanban --board <board-slug> list  # check visibility
 ```
 
-### Protocole du bot (SOUL.md)
+### Bot protocol (SOUL.md)
 
-Copier `references/SOUL-template.md` vers
-`~/.hermes/profiles/gh-triage/SOUL.md` et adapter les IDs.
+Copy `references/SOUL-template.md` to
+`~/.hermes/profiles/gh-triage/SOUL.md` and adapt the IDs.
 
-## Variables du pont (runtime)
+## Bridge variables (runtime)
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Role |
 |---|---|---|
-| `GH_REPO` | hyron-fr/hermes-experiment | repo cible |
-| `KANBAN_BOARD` | hermes-experiment | board kanban |
-| `KANBAN_ASSIGNEE` | default | profil worker |
-| `BOT_GRACE_SECONDS` | 600 | issue < N s réservée au bot |
-| `DRY_RUN` | 0 | simulation sans écriture |
-| `BRIDGE_VERBOSE` | 0 | loguer même les ticks sans action |
+| `GH_REPO` | hyron-fr/hermes-experiment | target repo |
+| `KANBAN_BOARD` | hermes-experiment | kanban board |
+| `KANBAN_ASSIGNEE` | default | worker profile |
+| `BOT_GRACE_SECONDS` | 600 | an issue younger than N s is reserved for the bot |
+| `DRY_RUN` | 0 | simulation with no write |
+| `BRIDGE_VERBOSE` | 0 | log even the ticks with no action |
 
-## Dashboard UI (onglet gh-kanban-bridge)
+## Dashboard UI (gh-kanban-bridge tab)
 
-Le pont est aussi pilotable depuis la web dashboard Hermes via un plugin UI
-(composant séparé de la skill, distribué par clone git). L'onglet expose
-trois sections : CONFIG (les 6 variables du pont, persistées dans le `.env`
-du profil — le token Discord n'est jamais lu ni renvoyé), ÉTAT (live via
-`stats --json`), ACTIONS (pull/push/sync/new avec la sortie réelle).
+The bridge is also drivable from the Hermes web dashboard through a UI plugin
+(a component separate from the skill, distributed by git clone). The tab exposes
+three sections: CONFIG (the bridge's 6 variables, persisted into the profile's
+`.env` — the Discord token is never read nor returned), STATE (live via
+`stats --json`), ACTIONS (pull/push/sync/new with the real output).
 
 ### Installation
 
 ```bash
-# 1. Cloner le plugin dans ~/.hermes/plugins/
+# 1. Clone the plugin into ~/.hermes/plugins/
 git clone https://github.com/hyron-fr/hermes-experiment.git /tmp/he
 cp -r /tmp/he/plugins/gh-kanban-bridge-ui ~/.hermes/plugins/
 
-# 2. Activer le plugin (gate plugins.enabled)
+# 2. Enable the plugin (plugins.enabled gate)
 hermes plugins enable gh-kanban-bridge --no-allow-tool-override
 
-# 3. Redémarrer la dashboard (ou rescan)
+# 3. Restart the dashboard (or rescan)
 hermes dashboard --stop
 hermes dashboard --host 0.0.0.0 --no-open
-#   ou, sans redémarrage :
+#   or, without restarting:
 curl http://127.0.0.1:9119/api/dashboard/plugins/rescan
 ```
 
-`setup.sh` fait les étapes 1–2 automatiquement (copie du plugin depuis le
-repo + enable) et rappelle le restart dashboard.
+`setup.sh` does steps 1–2 automatically (copy the plugin from the
+repo + enable) and reminds you of the dashboard restart.
 
-### Vérification (check curl)
+### Verification (curl check)
 
-La dashboard est derrière l'auth (basic/OAuth) : obtenir un cookie de session
-puis tester les routes.
+The dashboard sits behind auth (basic/OAuth): obtain a session cookie
+and then test the routes.
 
 ```bash
-# 1. Login (provider basic) → cookie de session
+# 1. Login (basic provider) → session cookie
 curl -c /tmp/hc.txt -X POST http://127.0.0.1:9119/auth/password-login \
   -H "Content-Type: application/json" \
   -d '{"provider":"basic","username":"<user>","password":"<pass>","next":""}'
 
-# 2. Config (6 champs, jamais le token)
+# 2. Config (6 fields, never the token)
 curl -b /tmp/hc.txt http://127.0.0.1:9119/api/plugins/gh-kanban-bridge/config
 
-# 3. État (cartes par statut + push/pull en attente)
+# 3. State (cards per status + pending push/pull)
 curl -b /tmp/hc.txt http://127.0.0.1:9119/api/plugins/gh-kanban-bridge/state
 
-# 4. Sync (déclenche le pont, sortie réelle)
+# 4. Sync (triggers the bridge, real output)
 curl -b /tmp/hc.txt -X POST http://127.0.0.1:9119/api/plugins/gh-kanban-bridge/sync
 ```
 
-L'onglet apparaît dans la sidebar après `after:kanban` (path
+The tab appears in the sidebar after `after:kanban` (path
 `/gh-kanban-bridge`).
 
-## Checklist de validation
+## Validation checklist
 
-1. `bash setup.sh` → exit 0, logs `[setup] terminé`
-2. `hermes cron list` montre `gh-kanban-bridge` ET `hermes -p gh-triage cron
-   list` montre `gh-triage-poll`
-3. `gh label list --repo <owner>/<repo>` montre `kanban` ET `triage`
-4. `hermes kanban boards list` montre le board (défaut `hermes-experiment`)
-5. Relancer `setup.sh` → exit 0, AUCUN doublon (mêmes crons, labels, board)
-6. `python3 gh_kanban_bridge.py sync` → tick muet (exit 0, stdout vide)
-7. Issue de test → poll l'annonce → thread ouvert + label `triage`
-8. Réponses dans le thread → synthèse structurée postée par le bot
-9. "go" → carte `ready` (idempotency-key `gh-issue-<n>`) + label `kanban`
-10. Dispatcher → worker → `done` → sync ferme l'issue avec le résumé
-11. Diagramme dans le thread : bloc ```mermaid + PNG via mermaid_render.py
+1. `bash setup.sh` → exit 0, logs the completion line `setup.sh:177` prints
+2. `hermes cron list` shows `gh-kanban-bridge` AND `hermes -p gh-triage cron
+   list` shows `gh-triage-poll`
+3. `gh label list --repo <owner>/<repo>` shows `kanban` AND `triage`
+4. `hermes kanban boards list` shows the board (default `hermes-experiment`)
+5. Re-run `setup.sh` → exit 0, NO duplicate (same crons, labels, board)
+6. `python3 gh_kanban_bridge.py sync` → silent tick (exit 0, empty stdout)
+7. Test issue → the poll announces it → thread opened + `triage` label
+8. Answers in the thread → structured synthesis posted by the bot
+9. "go" → card `ready` (idempotency-key `gh-issue-<n>`) + `kanban` label
+10. Dispatcher → worker → `done` → sync closes the issue with the summary
+11. Diagram in the thread: ```mermaid block + PNG via mermaid_render.py

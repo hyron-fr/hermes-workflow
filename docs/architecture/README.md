@@ -16,10 +16,19 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-1-verification-contract]] — Contrat de vérification de #1 (protocole C1..C6, provenance des 4 maillons, verdict de convergence).
 - [[issue-5]] — Interface de décision humaine pour les cartes bloquées (Discord + GitHub uniquement).
 - [[issue-4]] — Versionner pj_escalate.py (pipeline/) : garde-fou d'état d'issue + résolution de binaire hors PATH.
+- [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
+- [[issue-2]] — Rewrite in english (documentation-wide translation).
+- [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 
 ## Décisions (ADR)
 
+- [[ADR-0001-identite-asset-et-preuve-sans-oracle-externe]] — l'identité d'un asset vendu se prouve par un invariant dérivable, jamais par un chemin, un `cmp` ni un hash d'artefact externe (issue #7).
+
 _(peuplé par la carte `doc-k` : chaque ADR sous `decisions/` doit être référencé ici, sinon `pj_docs_lint.py` le signale orphelin.)_
+
+## Règles
+
+- [[declared-delta-rule]] — What the seal guard protects: the declared-delta rule (5 testable points).
 
 ## Composants
 
@@ -28,3 +37,4 @@ _(peuplé par la carte `doc-k` : chaque ADR sous `decisions/` doit être référ
 - [[pj-bridge-push-ancre]] — Ancre de `issue_number_of()` (issue #5, slice 3) : la carte `done` ferme l'issue de sa ligne de protocole `Importé depuis <url>`, jamais une autre citée dans le corps.
 - [[pj-notify]] — Émetteur des DEUX notifications d'une décision `/ok` (issue #5, slice 5) : l'enfant notifiée puis fermée, le parent notifié jamais fermé ; dédup par décision (jamais par horloge), non-blocant et jamais silencieux.
 - [[pj-escalate]] — Escalade déterministe des cartes bloquées vers Discord (contrat de variables d'environnement requises/optionnelles, règle « requise absente = refus bruyant », garde d'état d'issue : quatre chemins de doute, quatre avertissements distincts ; chaîne de publication `pj_publish.py` : identité sur le contenu tel qu'il s'exécute, contrôle des exports par motif, 5 étapes du geste dans l'ordre, codes de sortie `2 > 1 > 0`).
+- [[pj-lang-lint]] — deterministic language gate for the English corpus (issue #2, slice 2).

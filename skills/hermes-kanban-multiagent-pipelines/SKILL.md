@@ -10,102 +10,102 @@ metadata:
 
 # Hermes Kanban — Multi-agent pipelines (bots + worktree + PR + versioning)
 
-Construire une équipe d'agents/bots qui collaborent sur un board kanban, à étapes
-orchestrées par un chef (scrrum), avec interfaces forcées (Discord, GitHub PR, worktree)
-et le tout versionnable.
+Build a team of agents/bots that collaborate on a kanban board, with steps
+orchestrated by a lead (scrrum), with forced interfaces (Discord, GitHub PR, worktree)
+and the whole thing versionable.
 
-## Principe — une SOUL seule est une coquille
+## Principle — a lone SOUL is a shell
 
-Un pipeline concret = **skill chargée dans le profil** (attentes + protocoles, versionnées)
-**+ mécanismes natifs branchés** (worktree, completion-contract, dispatcher) **+ boucle
-déclarée** (chef crée les enfants → dispatcher promeut → worker tourne).
+A concrete pipeline = **a skill loaded into the profile** (expectations + protocols, versioned)
+**+ native mechanisms wired in** (worktree, completion-contract, dispatcher) **+ a declared
+loop** (the lead creates the children → the dispatcher promotes → the worker runs).
 
-## Le piège n°1 : worker autonome vs grooming interactif
+## Pitfall #1: autonomous worker vs interactive grooming
 
-Une skill/SOUL écrite pour un échange **interactif** (poser des questions, attendre la
-réponse) **crash** dès que le dispatcher spawn le même profil comme **worker autonome** :
-le worker sort proprement (rc=0) sans `kanban_complete` ni `kanban_block` → le dispatcher
-compte une `protocol_violation`, retente jusqu'à `failure_limit`, puis `gave_up` → carte
-`blocked` avec « worker exited cleanly without calling kanban_complete or kanban_block ».
+A skill/SOUL written for an **interactive** exchange (ask questions, wait for the
+answer) **crashes** as soon as the dispatcher spawns the same profile as an **autonomous
+worker**: the worker exits cleanly (rc=0) without `kanban_complete` or `kanban_block` → the
+dispatcher counts a `protocol_violation`, retries until `failure_limit`, then `gave_up` → card
+`blocked` with "worker exited cleanly without calling kanban_complete or kanban_block".
 
-**Règle pour toute skill/SOUL de worker kanban : tout run doit se terminer par un appel
-tool kanban terminal (comment/complete/block).** Un run qui finit sans acte terminal compte
-comme échec peu importe ce qu'il a fait. Quand le worker a besoin de l'humain, il fait
-`kanban_block` + `kanban_comment` (avec le lien du thread Discord dans le commentaire),
-puis attend le `unblock`.
+**Rule for every kanban worker skill/SOUL: by definition any run must end with a terminal
+kanban tool call (comment/complete/block).** A run that ends without a terminal act is
+counted as a defect, whatever it did. When the worker needs the human, it calls
+`kanban_block` + `kanban_comment` (with the Discord thread link in the comment),
+then waits for the `unblock`.
 
-Pour un grooming **réellement interactif** (un humain face au bot en session), ne pas passer
-par un worker autonome : la carte reste `blocked` en attente d'input, l'humain fait
-`unblock` + `complete` à la main après la discussion.
+For **genuinely interactive** grooming (a human facing the bot in session), do not go
+through an autonomous worker: the card stays `blocked` waiting for input, the human does
+`unblock` + `complete` by hand after the discussion.
 
-## Structurer un repo versionné
+## Structuring a versioned repo
 
 ```
-mon-pipeline/
-├── profiles/<nom-profil>/SKILL.md    # attentes par étape (source de vérité, versionnée)
-├── runbook/interfaces.md             # discord/github/worktree : où vit la config
-├── deploy/deploy.sh                  # matérialise skills → profils Hermes réels
-└── .gitignore                        # *.db, state.db, .env, auth.json (JAMAIS l'état)
+my-pipeline/
+├── profiles/<profile-name>/SKILL.md  # per-step expectations (source of truth, versioned)
+├── runbook/interfaces.md             # discord/github/worktree: where the config lives
+├── deploy/deploy.sh                  # materialises skills → real Hermes profiles
+└── .gitignore                        # *.db, state.db, .env, auth.json (NEVER the state)
 ```
 
-Versionner : profiles/*/SKILL.md + runbook + deploy. Jamais : kanban.db (état),
-state.db (sessions), .env/auth.json (secrets). L'état se reconstruit, pas le code.
-Le board est l'état ; il ne se versionne jamais.
+Version: profiles/*/SKILL.md + runbook + deploy. Never: kanban.db (state),
+state.db (sessions), .env/auth.json (secrets). The state is rebuilt, not the code.
+The board is the state; it is never versioned.
 
-## Mécanismes builtin pour forcer les interfaces
+## Builtin mechanisms that force the interfaces
 
-| Interface | Mécanisme kanban | Effet |
+| Interface | kanban mechanism | Effect |
 |---|---|---|
-| Implémentation en worktree isolé | `--workspace worktree --branch feature/<id>` | worker sur une branche, pas main; workspace non-scratch survit à la complétion |
-| Validation PR (checks CI requis) | `--completion-contract OWNER/REPO` sur la carte | `done` **refusé** tant que checks requis pas verrs — pas de code custom |
-| Avis / revue | `kanban_request_review` / `kanban_request_changes` | boucle review→re-run native |
-| Entrée humaine | `kanban_block` + `kanban_comment` (lien Discord) | worker attend, humain répond puis unblock |
+| Implementation in an isolated worktree | `--workspace worktree --branch feature/<id>` | worker on a branch, not main; a non-scratch workspace survives completion |
+| PR validation (required CI checks) | `--completion-contract OWNER/REPO` on the card | `done` is **refused** while the required checks are not green — no custom code |
+| Advice / review | `kanban_request_review` / `kanban_request_changes` | native review→re-run loop |
+| Human input | `kanban_block` + `kanban_comment` (Discord link) | worker waits, the human answers then unblocks |
 
-Vérifier le CLI réel (`hermes kanban create --help`) pour les flags exacts :
+Check the real CLI (`hermes kanban create --help`) for the exact flags:
 `--workspace`, `--branch`, `--completion-contract`.
 
-## Activer kanban — deux couches distinctes (ne pas les confondre)
+## Enabling kanban — two distinct layers (do not confuse them)
 
-| Couche | Ce que c'est | Activation |
+| Layer | What it is | Activation |
 |---|---|---|
-| Board visuel Desktop | plugin desktop bundled `kanban`, livré `defaultEnabled: false` | **Capabilities → Plugins → ligne « Kanban » → colonne Desktop** ; deep-link `/skills?tab=plugins&plugin=kanban`. Live, aucun redémarrage. |
-| Tools `kanban_*` en session | surface agent | clef racine `toolsets` de config.yaml (voir pitfall ci-dessous) |
+| Desktop visual board | bundled desktop plugin `kanban`, shipped `defaultEnabled: false` | **Capabilities → Plugins → the "Kanban" row → the Desktop column**; deep-link `/skills?tab=plugins&plugin=kanban`. Live, no restart. |
+| Tools `kanban_*` in session | agent surface | root key `toolsets` of config.yaml (see the pitfall below) |
 
-Le board Desktop est un réglage du **renderer** (localStorage
-`hermes.desktop.pluginDecisions.v2`) : aucun flag CLI ne l'allume, donc l'agent ne
-peut pas le basculer pour l'utilisateur — donner le chemin UI exact + le deep-link.
-Le **backend** est prêt dans tous les cas : le router REST `/api/plugins/kanban/*`
-(≈47 routes) est monté depuis le plugin bundled `plugins/kanban/dashboard`, montage
-indépendant du toggle. Vérifier le board courant avec `hermes kanban boards list`.
+The Desktop board is a **renderer** setting (localStorage
+`hermes.desktop.pluginDecisions.v2`): no CLI flag turns it on, so the agent
+cannot flip it for the user — give the exact UI path + the deep-link.
+The **backend** is wired in every case: the REST router `/api/plugins/kanban/*`
+(≈47 routes) is mounted from the bundled plugin `plugins/kanban/dashboard`, a mount
+independent of the toggle. Check the current board with `hermes kanban boards list`.
 
-Une carte `ready` n'est exécutée que si elle a un **assignee** : sans
-`kanban.default_assignee` (ou assignee à la main) le board reste inerte même allumé.
+A `ready` card is only executed when it has an **assignee**: without
+`kanban.default_assignee` (or an assignee set by hand) the board stays inert even switched on.
 
-Fichiers de vérité, ce que le plugin desktop apporte, et diagnostic du verrou
-dispatcher : `references/activating-kanban.md`.
+The files of truth, what the desktop plugin brings, and how to diagnose the dispatcher
+lock: `references/activating-kanban.md`.
 
-## Pitfalls de déploiement
+## Deployment pitfalls
 
-- **Les dossiers sources doivent porter le NOM EXACT des profils Hermes réels**
-  (`projecta-scrum`, pas `scrum`). Toujours lancer le deploy en `--dry-run` d'abord — il
-  révèle le mismatch de nommage avant la copie.
-- Activer les tools kanban en session interactive : la clef **top-level** `toolsets`
-  de config.yaml, lue littéralement par le check_fn `_profile_has_kanban_toolset()`
-  (`load_config().get("toolsets", [])`). Commande vérifiée :
-  `hermes config set toolsets '["kanban"]'` → YAML correct (`toolsets:` puis `- kanban`).
-  Ne pas passer par la forme pointée `hermes config set toolsets.0 kanban` (écrit un dict
-  fautif `'0': kanban`). **`platform_toolsets.cli` est un leurre ici** : la liste CLI
-  contient `kanban` par récupération read-time, mais le check_fn ne lit QUE la clef
-  racine — donc y ajouter `kanban` ne débloque rien, et l'absence de la clef racine
-  laisse les 14 `kanban_*` filtrés même si `hermes-cli` les liste. Les workers spawnés
-  ont les tools automatiquement (HERMES_KANBAN_TASK), sans aucune config. `platform_toolsets.cli.*` RESTREINT au contraire (liste
-explicite = opt-in étroit) — ne pas confondre. Les workers spawnés ont les tools
-  automatiquement (HERMES_KANBAN_TASK).
-- Profils créés via `hermes profile create` sont des îles : ils n'héritent PAS la section
-  `providers:` du source. Recopier le bloc (base_url + api_key + models) sinon « Unknown
-  provider ... agent_init_failed ». Vérifier `hermes -p <profil> doctor`.
-- Chaque worker doit avoir une skill qui encode le type de workspace attendu (scratch vs
-  worktree) et l'acte kanban terminal obligatoire.
-- CLI kanban : `--board` AVANT le sous-commande ; `comment` = arg positionnel. Profils =
-  minuscules alphanumériques ; board `--switch` crée `boards/<slug>/kanban.db` (`init` seul
-  exige `boards create`).
+- **The source directories must carry the EXACT NAME of the real Hermes profiles**
+  (`projecta-scrum`, not `scrum`). Always run the deploy in `--dry-run` first — it
+  reveals the naming mismatch before the copy.
+- Enabling the kanban tools in an interactive session: the **top-level** key `toolsets`
+  of config.yaml, read literally by the check_fn `_profile_has_kanban_toolset()`
+  (`load_config().get("toolsets", [])`). Verified command:
+  `hermes config set toolsets '["kanban"]'` → correct YAML (`toolsets:` then `- kanban`).
+  Do not use the dotted form `hermes config set toolsets.0 kanban` (it writes a faulty
+  dict `'0': kanban`). **`platform_toolsets.cli` is a decoy here**: the CLI list
+  contains `kanban` through a read-time fallback, but the check_fn reads ONLY the root
+  key — so adding `kanban` there releases nothing, and the absence of the root key
+  leaves the 14 `kanban_*` filtered even if `hermes-cli` lists them. Spawned workers
+  have the tools automatically (HERMES_KANBAN_TASK), with no config at all. `platform_toolsets.cli.*` RESTRICTS instead (an
+explicit list = a narrow opt-in) — do not confuse the two. Spawned workers have the tools
+  automatically (HERMES_KANBAN_TASK).
+- Profiles created via `hermes profile create` are islands: they do NOT inherit the
+  `providers:` section of the source. Copy the block (base_url + api_key + models) or "Unknown
+  provider ... agent_init_failed". Check with `hermes -p <profile> doctor`.
+- Each worker must have a skill that encodes the expected workspace type (scratch vs
+  worktree) and the mandatory terminal kanban act.
+- kanban CLI: `--board` BEFORE the subcommand; `comment` = positional argument. Profiles =
+  lowercase alphanumerics; board `--switch` creates `boards/<slug>/kanban.db` (`init` alone
+  requires `boards create`).
