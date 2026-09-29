@@ -70,7 +70,11 @@ BOARD = os.environ.get("PJ_BOARD", "")
 VERBOSE = os.environ.get("PJ_VERBOSE") == "1"
 DRY = os.environ.get("PJ_DRY_RUN") == "1"
 SPECS_ROOT = Path.home() / ".hermes" / "kanban" / "boards"
-ANCHOR_ROOT = "${HOME}/pj-repos"
+# Racine des clones d'ancrage : surchargeable par variable d'environnement,
+# avec une valeur par defaut derivee du HOME (jamais un chemin absolu en dur).
+# Racine des clones d'ancrage : surchargeable par variable d'environnement, avec une
+# valeur par defaut derivee du HOME (jamais un chemin absolu en dur, cf. CONTRIBUTING).
+ANCHOR_ROOT = os.environ.get("PJ_ANCHOR_ROOT") or str(Path.home() / "pj-repos")
 IMPORT_RE = re.compile(r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/(\d+)")
 
 
@@ -95,15 +99,33 @@ def _wt_path(branch: str) -> str:
     return branch.replace("/", "-")
 
 
-def shared_worktree_path(doc: dict, anchor: str) -> str:
+def shared_worktree_path(doc: dict, anchor: str, holders: dict | None = None) -> str:
     """Chemin ABSOLU du worktree partagé de l'issue.
 
     `worktree_path` (optionnel) permet d'ADOPTER un worktree déjà matérialisé ; sans lui
     on retombe sur le nom canonique `<anchor>/.worktrees/<branche>`.
+
+    DÉFAUT VÉCU (issue #2, carte `t_7c5b773d`) : le dispatcher matérialise le worktree
+    partagé sur le premier claim quand bien même le manifeste ne le nomme pas — le
+    chemin réel est alors `<anchor>/.worktrees/<task-id>`, PAS le nom canonique dérivé
+    de la branche. Un corps de carte généré avec le nom canonique désigne un chemin
+    INEXISTANT : l'ordre `git worktree remove <mauvais chemin> --force` échoue, et le
+    worker tient un critère d'acceptation qu'aucune commande ne peut satisfaire. On
+    interroge donc git pour reprendre le chemin RÉEL du worktree qui tient déjà la
+    branche (`holders` = sortie de `worktree_holders`, injectable pour les tests).
     """
     raw = str(doc.get("worktree_path") or "").strip()
     if not raw:
-        return f"{anchor}/.worktrees/{_wt_path(str(doc.get('branch') or ''))}"
+        branch = str(doc.get("branch") or "")
+        if holders is None and branch:
+            try:
+                holders = worktree_holders(anchor)
+            except WorktreeConflict:
+                holders = {}
+        real = (holders or {}).get(branch)
+        if real and _within(real, anchor):
+            return real
+        return f"{anchor}/.worktrees/{_wt_path(branch)}"
     if raw.startswith("~"):
         raise ValueError(
             "worktree_path ne peut pas commencer par '~' : chemin explicite attendu")
@@ -112,6 +134,12 @@ def shared_worktree_path(doc: dict, anchor: str) -> str:
     if ".." in Path(raw).parts:
         raise ValueError(f"worktree_path {raw!r} contient '..' (sortie de l'anchor interdite)")
     return raw if raw.startswith("/") else os.path.normpath(f"{anchor}/{raw}")
+
+
+def _within(path: str, anchor: str) -> bool:
+    """Le chemin est-il DANS l'anchor ? (garde d'adoption : jamais un worktree étranger)"""
+    a, p = os.path.realpath(anchor), os.path.realpath(path)
+    return p == a or p.startswith(a + os.sep)
 
 
 def parse_worktrees(porcelain: str) -> dict:
@@ -162,13 +190,27 @@ def preflight_worktree(plan: dict, holders=None) -> None:
         f"AUCUNE carte n'a été créée.")
 
 
-def build_plan(doc: dict, t5_id: str, board: str, root_id: str) -> dict:
+def build_plan(doc: dict, t5_id: str, board: str, root_id: str,
+               holders: dict | None = None) -> dict:
     """Plan pur (testable) : {"cards": [...], "links": [[parent, child], ...], "worktree": {...}}."""
     repo = doc["repo"]
     anchor = f"{ANCHOR_ROOT}/{repo}"
     branch = doc["branch"]
     issue = doc["issue"]
-    shared = shared_worktree_path(doc, anchor)
+    # Chemin RÉEL d'abord (adoption du worktree déjà matérialisé par le dispatcher) :
+    # les corps de carte citent ce chemin, un chemin inexistant rend l'ordre de
+    # suppression infaisable. `holders` est injectable pour les tests.
+    if holders is None:
+        try:
+            holders = worktree_holders(anchor)
+        except WorktreeConflict:
+            # Anchor absent (ex. `${HOME}` non expansé dans l'arbre d'un test) : holders
+            # INCONNUS, pas « aucun worktree ». Les distinguer est indispensable — le
+            # `holders` injecté par `build_plan_checked` (déjà sondé pour le préflight)
+            # doit court-circuiter toute relecture, sinon deux lecteurs peuvent se
+            # contredire sur le même état.
+            holders = None
+    shared = shared_worktree_path(doc, anchor, holders)
     shared_rel = os.path.relpath(shared, anchor)
     wt_workspace = f"worktree:{shared}"
 
@@ -203,16 +245,41 @@ def build_plan(doc: dict, t5_id: str, board: str, root_id: str) -> dict:
         {"key": "worktree-rm", "title": f"worktree-rm #{issue} : nettoyer le worktree",
          "assignee": "pj-dev", "workspace": "scratch", "branch": None, "parents": ["t6"],
          "body": (f"POST-MERGE uniquement : la PR de l'issue #{issue} doit être MERGED "
-                  f"(`gh pr view <url> --json state` == MERGED). Vérifier que tous les commits "
-                  f"de `{branch}` sont dans dev (`git merge-base --is-ancestor origin/{branch} "
-                  f"origin/dev`), puis :\n"
+                  f"(`gh pr view <numero> --json state` == MERGED — le numéro est celui du "
+                  f"commentaire de t6, jamais deviné).\n"
+                  f"Vérifier la COUVERTURE commit-à-commit, puis la FORME du contenu — "
+                  f"les deux, dans cet ordre :\n"
+                  f"  1. `git cherry -v origin/dev origin/{branch}` → toute ligne `+` nomme un "
+                  f"commit SANS équivalent dans dev, donc du contenu jamais livré. Seule une "
+                  f"sortie SANS ligne `+` autorise à conclure « livré » ;\n"
+                  f"  2. `git diff --name-status origin/dev origin/{branch}` → 0 fichier `A` "
+                  f"(aucun contenu unique à la branche) ; les `D` sont des pickups obsolètes, "
+                  f"régressifs à ne PAS porter.\n"
+                  f"NE PAS conclure sur un seul critère (mesuré sur l'issue #2 : "
+                  f"`git diff --quiet origin/dev origin/{branch}` rend exit 0 — l'arbre n'a rien "
+                  f"que dev n'ait pas — ALORS QUE `git cherry` rend 11 commits sans équivalent, "
+                  f"dont la suppression de `bridge/` et la traduction anglaise des 9 slices. "
+                  f"Un diff de tip ne voit pas 11 commits d'histoire : l'arbre seul est un faux "
+                  f"positif, et supprimer là-dessus détruit du travail non livré. Symétriquement, "
+                  f"`git merge-base --is-ancestor origin/{branch} origin/dev` rend rc=1 après "
+                  f"toute rebase (SHA ré-émargés) : c'est un FAUX NÉGATIF, jamais un motif de "
+                  f"blocage en soi.)\n"
+                  f"Puis :\n"
                   f"`git -C {anchor} worktree list` (le worktree partagé `{shared_rel}` doit "
-                  f"être sur `{branch}` et AUCUNE carte de slice ne doit encore le tenir) ;\n"
+                  f"être sur `{branch}` et AUCUNE carte de slice ne doit encore le tenir ; "
+                  f"ne PAS toucher aux autres worktrees de l'anchor) ;\n"
                   f"`git -C {anchor} worktree remove {shared_rel} --force`\n"
-                  f"`git -C {anchor} branch -D {branch}` et suppression de la branche distante.\n"
-                  f"Poster `git worktree list` en commentaire. Si du travail n'est pas mergé, ou "
-                  f"au moindre doute (carte de slice encore active) : `kanban_block` au lieu de "
-                  f"supprimer.")},
+                  f"(c'est la sortie BRUTE de `git -C {anchor} worktree list` qui fait foi : "
+                  f"elle donne le chemin RELATIF à l'anchor, valable depuis n'importe quelle "
+                  f"machine. N'imprime jamais un chemin absolu dans un commentaire de carte, "
+                  f"il cesse d'identifier le worktree dès que l'ANCHOR_ROOT change.)\n"
+                  f"`git -C {anchor} branch -D {branch}` et suppression de la branche distante. "
+                  f"La DoR « `specs/<issue>/slices.json` présent » vise le manifeste DU BOARD "
+                  f"(`~/.hermes/kanban/boards/<board>/specs/{issue}/slices.json`), jamais un "
+                  f"fichier du repo : c'est un artefact de spec, hors dépôt par convention.\n"
+                  f"Poster `git worktree list` en commentaire. Si du travail n'est pas dans "
+                  f"dev, ou au moindre doute (carte de slice encore active) : `kanban_block` "
+                  f"au lieu de supprimer.")},
     ]
 
     for s in doc["slices"]:
@@ -359,9 +426,12 @@ def build_plan_checked(doc: dict, t5_id: str, board: str, root_id: str, holders=
     `holders` (dict branche->chemin) est injectable pour les sondes ; `None` => lecture
     réelle du dépôt.
     """
-    plan = build_plan(doc, t5_id=t5_id, board=board, root_id=root_id)
+    # Les holders sont lus UNE fois : le plan (donc les corps de carte) et le préflight
+    # doivent voir le MÊME état — sinon le chemin cité par une carte peut être celui que
+    # le préflight vient de juger conflictuel.
+    plan = build_plan(doc, t5_id=t5_id, board=board, root_id=root_id, holders=holders)
     check_topology(plan, t5_id=t5_id, root_id=root_id)
-    preflight_worktree(plan, holders=holders)
+    preflight_worktree(plan, holders=holders or None)
     return plan
 
 
