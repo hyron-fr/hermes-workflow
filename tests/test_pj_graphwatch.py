@@ -188,3 +188,29 @@ def test_worktree_rm_body_names_the_ancestor_check_as_a_false_negative(gw):
     body = {c["key"]: c for c in _plan(gw)["cards"]}["worktree-rm"]["body"]
     assert body.count("is-ancestor") <= 1
     assert "FAUX NÉGATIF" in body
+
+
+def test_worktree_rm_body_separates_delivery_from_risk_of_loss(gw):
+    """Mesurer la LIVRAISON et le RISQUE DE PERTE sur deux branchements distincts.
+
+    Vécu (issue #2) : une livraison RE-BASÉE ré-émarque les commits (patch-id). La branche
+    du worktree garde donc des lignes `+` alors que le contenu EST livré — et un critère qui
+    exige `0 +` sur CETTE branche bloque une carte qui n'a rien à perdre. Mesuré :
+    `git cherry` sur la branche de livraison = 0 `+`, sur la branche à supprimer = 11 `+`,
+    dont 10 artefacts dont le blob est déjà dans `dev` et 1 seul écart réel (`39a2bf6`),
+    préservé par `origin/main`.
+    """
+    body = {c["key"]: c for c in _plan(gw)["cards"]}["worktree-rm"]["body"]
+    assert "headRefName" in body, (
+        "la livraison se mesure sur la branche RÉELLEMENT mergée (`gh pr view --json "
+        "headRefName`), pas sur la branche du worktree")
+    assert "LIVRAISON" in body and "CIBLE DE SUPPRESSION" in body, (
+        "les deux questions doivent être nommées distinctement : livraison / risque de perte")
+    for fait in ("branch -r --contains", "rev-parse origin/dev:", "REJETÉ"):
+        assert fait in body, (
+            "chaque ligne `+` doit pouvoir ÉTABLIR SA PRÉSERVATION : fait de préservation "
+            "manquant : %r" % fait)
+    assert "une ligne `+` ne se juge JAMAIS seule" in body, (
+        "le corps doit dire explicitement qu'un `+` sur la cible n'est pas en soi un blocage")
+    assert "SAUVEGARDE d'abord" in body, (
+        "la sauvegarde À DISTANCE est le temps 0, avant toute suppression")
