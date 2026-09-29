@@ -1,15 +1,15 @@
-# Template de ticket — check déterministe
+# Ticket template — deterministic check
 
-Un ticket de spec valide doit contenir les sections suivantes :
+A valid spec ticket must contain the following sections:
 
 ## Goal
-(une phrase : ce que le ticket doit accomplir)
+(one sentence: what the ticket must accomplish)
 
 ## Architecture
-(les choix structurants, si pertinent)
+(the structuring choices, where relevant)
 
-## Dépendances
-(ce dont le ticket dépend, ou "aucune")
+## Dependencies
+(what the ticket depends on, or "none")
 
-## Critères d'acceptation
-(liste numérotée, mesurable)
+## Acceptance criteria
+(numbered list, measurable)

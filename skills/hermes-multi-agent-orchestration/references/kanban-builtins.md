@@ -1,55 +1,55 @@
-# Kanban builtin — table de transitions & mécanique rooms
+# Kanban builtins — transition table & room mechanics
 
-## Statuts (kanban_db.py:89, fixés)
+## Statuses (kanban_db.py:89, fixed)
 
 `triage, todo, scheduled, ready, running, blocked, review, done, archived`
 
-Colonnes de carte utiles : `workflow_template_id`, `current_step_key`,
-`completion_contract`, `tenant` (namespace souple), `idempotency_key` (dédup
-automation, non exposé dans list/show --json).
+Useful card columns: `workflow_template_id`, `current_step_key`,
+`completion_contract`, `tenant` (loose namespace), `idempotency_key` (automation
+dedup, not exposed by list/show --json).
 
-## Transitions et déclencheurs
+## Transitions and triggers
 
-| Transition | Déclencheur | Mécanisme |
+| Transition | Trigger | Mechanism |
 |---|---|---|
-| create → triage | humain/bot | `kanban create` (`--triage`) |
-| triage → todo | grooming | `hermes kanban specify <id>` (aux-LLM resserre titre+body) ou édition manuelle |
-| todo → ready | dispatcher, AUTO quand tous les parents done | `kanban_link` |
-| ready → running | dispatcher, claim atomique + spawn worker | tick dispatch (gate d'admission ici) |
-| running → blocked | worker/humain, + AUTO après `failure_limit` échecs consécutifs | `kanban_block` (circuit breaker) |
-| blocked → running | humain/bot | `kanban_unblock` |
+| create → triage | human/bot | `kanban create` (`--triage`) |
+| triage → todo | grooming | `hermes kanban specify <id>` (an aux-LLM tightens title+body) or manual edit |
+| todo → ready | dispatcher, AUTO once every parent is done | `kanban_link` |
+| ready → running | dispatcher, atomic claim + worker spawn | dispatch tick (admission gate here) |
+| running → blocked | worker/human, + AUTO after `failure_limit` consecutive failures | `kanban_block` (circuit breaker) |
+| blocked → running | human/bot | `kanban_unblock` |
 | running → review | worker | `kanban_request_review` |
-| review → running | reviewer | `kanban_request_changes` (reprends ton code) |
-| running → done | worker | `kanban_complete` (+ contract PR si déclaré) |
-| done → archived | humain/gc | `hermes kanban archive` / `gc` |
-| (parking) scheduled | timing/follow-up connue | `hermes kanban schedule` |
+| review → running | reviewer | `kanban_request_changes` (you take your code back) |
+| running → done | worker | `kanban_complete` (+ PR contract when declared) |
+| done → archived | human/gc | `hermes kanban archive` / `gc` |
+| (parking) scheduled | known timing/follow-up | `hermes kanban schedule` |
 
-Statuts initiaux alternatifs à la création : `--initial-status blocked|running`.
-Réassignation : `hermes kanban reassign` / `reclaim` (une carte peut changer de
-worker entre étapes — alternative à une carte par étape).
+Alternative initial statuses at creation: `--initial-status blocked|running`.
+Reassignment: `hermes kanban reassign` / `reclaim` (a card can change
+worker between steps — the alternative to one card per step).
 
-## Gate de résultat vs gate de claim
+## Result gate vs claim gate
 
-- Gate de claim (hook `kanban_task_claimed`) : filtre d'admission, verdict en
-  commentaire `[gate] pass|fail`. Observer — exit code ignoré.
-- Gate de résultat : soit un profil revieweur (`kanban_request_review` →
-  `request_changes`), soit un completion contract (`--completion-contract
-  OWNER/REPO` ou `local-only`) : le `done` est refusé sans checks requis verts,
-  avec événements durables `pr_acceptance` et `last_failure_error` pour le
+- Claim gate (hook `kanban_task_claimed`): admission filter, verdict in a
+  `[gate] pass|fail` comment. An observer — exit code ignored.
+- Result gate: either a reviewer profile (`kanban_request_review` →
+  `request_changes`), or a completion contract (`--completion-contract
+  OWNER/REPO` or `local-only`): `done` is refused without the required checks green,
+  with durable `pr_acceptance` and `last_failure_error` events for the
   retry.
 
-## Rooms (group chats) — mécanique
+## Rooms (group chats) — mechanics
 
-- 2-6 bots ; ton message → ≤3 rounds sériels × ≤10 messages/round ; un membre
-  répond seulement s'il a quelque chose à ajouter, sinon il passe ; le room
-  settle quand un round complet est silencieux.
-- `@mention` scope le round aux ciblés ; `@user` escalade à l'humain (badge
-  needs-you ; les prompts en attente le rallument aussi).
-- Chaque membre = session persistante `Group: <name>` (contexte qui survit).
-- Durable : si tous les membres partagent un gateway, le driver du gateway
-  porte la room — fermer le desktop n'interrompt pas (catch-up au log).
-- Multi-machines possible (Desktop relay / `hermes peer`) mais le driver
-  durable n'est garanti que sur un gateway partagé.
-- `message_agent` : DM bot↔bot fire-and-forget, SEULEMENT depuis le canonical
-  Bot Chat (jamais en room ni en CLI).
-- Hooks plugins : `on_room_member_activity` projette turn.started/turn.settled.
+- 2-6 bots; your message → ≤3 serial rounds × ≤10 messages/round; a member
+  answers only if it has something to add, otherwise it passes; the room
+  settles when a full round is silent.
+- `@mention` scopes the round to the mentioned bots; `@user` escalates to the human (needs-you
+  badge; pending prompts light it up again too).
+- Every member = a persistent session `Group: <name>` (a context that survives).
+- Durable: if all members share a gateway, the gateway's driver
+  carries the room — closing the desktop does not interrupt it (log catch-up).
+- Multi-machine possible (Desktop relay / `hermes peer`) but the durable
+  driver is only guaranteed on a shared gateway.
+- `message_agent`: bot↔bot fire-and-forget DM, ONLY from the canonical
+  Bot Chat (never in a room, never in the CLI).
+- Plugin hooks: `on_room_member_activity` projects turn.started/turn.settled.
