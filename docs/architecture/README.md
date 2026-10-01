@@ -19,6 +19,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
+- [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
 
 ## Décisions (ADR)
 
