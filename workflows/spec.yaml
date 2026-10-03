@@ -16,12 +16,13 @@ orchestration:
   gate: all_validated
   max_iterations: 10
 
-# Smileys + libellés de statut du thread Discord (lus par le moteur).
+# Table d'états arbitrée (Q3 = d) : état → icône du titre Discord.
+# Remplace l'ancien jeu `running/done/fail/retry` (une seule table).
 status:
-  running: "⚙️ running"
-  done: "✅ done"
-  fail: "❌ fail"
-  retry: "🔁 retry"
+  startup: "🎬 démarrage"
+  in_progress: "⚙️ in progress"
+  blocked: "⚠ bloqué"
+  done: "🛑 terminé"
 
 steps:
   # Étape 1 — Agents point de vue (parallèle).

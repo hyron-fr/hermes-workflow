@@ -200,43 +200,87 @@ def notify_step(ticket: dict, sid: str, stype: str, result: dict,
 
 
 # --- renommage du thread Discord par étape --------------------------------
-# Smileys + libellés de statut définis au niveau du YAML (clé `status` du
-# workflow), pas codés en dur. Chaque étape peut surcharger `icon`/`status`.
-DEFAULT_STATUS_LABELS = {
-    "running": "⚙️ running",
-    "done": "✅ done",
-    "fail": "❌ fail",
-    "retry": "🔁 retry",
+# Formateur PUR du titre (#19, arbitrage humain Q1=1a / Q3=d). La table
+# d'états ci-dessous est la SEULE source d'icônes : elle remplace l'ancien jeu
+# de libellés de statut du moteur (une seule table, celle de l'arbitrage).
+NAME_MAX = 100  # borne d'un nom de thread Discord (1–100 caractères)
+TITLE_ICONS = {
+    "startup": "\U0001f3ac",        # 🎬 démarrage — jusqu'à la validation du plan
+    "in_progress": "\u2699\ufe0f",  # ⚙️ in progress — les agents travaillent
+    "blocked": "\u26a0",            # ⚠  bloqué — intervention humaine requise
+    "done": "\U0001f6d1",           # 🛑 terminé
 }
+# État INTERNE du moteur -> état arbitré du titre. `fail`/`retry` n'ont pas
+# d'équivalent arbitré : ils n'écrivent pas de titre partiel (best-effort).
+_OUTCOME_STATE = {"running": "in_progress", "done": "done"}
+
+
+def title_icon(state: str) -> str:
+    """Icône du titre Discord pour un état arbitré (bijection) ; refuse le reste."""
+    if state not in TITLE_ICONS:
+        raise ValueError(
+            f"état de titre inconnu: {state!r} (états: {sorted(TITLE_ICONS)})")
+    return TITLE_ICONS[state]
+
+
+def format_title(project: str, ticket, title: str, state: str) -> str:
+    """Compose '<icône> <project>|#<ticket>|<titre>' (formateur PUR).
+
+    L'identité `project|#ticket|` est FIXE d'un état à l'autre : seule l'icône
+    change. Le nom est borné à `NAME_MAX` ; la coupe porte sur la FIN du titre,
+    jamais sur l'identité. Un `|` déjà présent dans le titre est conservé.
+    """
+    icon = title_icon(state)  # refuse un état inconnu AVANT toute composition
+    n = ticket
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError(f"numéro de ticket non numérique: {n!r}")
+    prefix = f"{icon} {project}|#{n}|"
+    budget = max(0, NAME_MAX - len(prefix))
+    return prefix + str(title or "")[:budget]
 
 
 def _status_labels(wf: dict) -> dict:
-    labels = dict(DEFAULT_STATUS_LABELS)
-    labels.update(wf.get("status", {}) or {})
-    return labels
+    """Table d'états du workflow (clé `status` du YAML) — une SEULE table, celle
+    de l'arbitrage #19. Aucun repli historique : une table absente reste vide."""
+    return dict(wf.get("status", {}) or {})
+
+
+def _state_from_label(labels: dict, label: str) -> str | None:
+    """État arbitré dont le libellé déclaré vaut `label` (bijection), sinon None."""
+    for state, value in (labels or {}).items():
+        if str(value) == str(label):
+            return state
+    return None
 
 
 def rename_thread(ticket: dict, step: dict, outcome: str, dry_run: bool,
                   labels: dict) -> None:
-    """Renomme le thread Discord de l'issue en '{icon} {status} - issue N …'.
+    """Renomme le thread Discord de l'issue au format arbitré (#19).
 
     Best-effort : un échec de renommage ne casse jamais le pipeline.
-    `outcome` ∈ {running, done, fail, retry} sélectionne le libellé dans
-    `labels` (défini dans le YAML). Une étape peut surcharger `icon` et/ou
-    `status` (critère 5).
+    `outcome` est l'état INTERNE du moteur (running/done/fail/retry) ; il est
+    traduit en état arbitré (`TITLE_ICONS`) puis composé par `format_title`.
+    Le formateur reçoit l'état, il ne décide pas de la transition. Un outcome
+    sans équivalent arbitré (fail, retry) n'écrit aucun titre partiel.
+    Une étape peut surcharger `icon`/`status` (clé `status` du YAML).
     """
     if dry_run or not ticket.get("issue_number"):
         return
     tid = resolve_thread(ticket["issue_number"])
     if not tid:
         return
-    label = labels.get(outcome, labels["running"])
+    label = str(labels.get(_OUTCOME_STATE.get(outcome, ""), "")) if labels else ""
     icon = step.get("icon")
     status = step.get("status")
     if icon or status:
         base_icon, _, base_status = label.partition(" ")
         label = f"{icon or base_icon} {status or base_status}".strip()
-    name = f"{label} - issue {ticket['issue_number']} {ticket.get('title', '')}"
+    state = _state_from_label(labels, label) or _OUTCOME_STATE.get(outcome)
+    if state not in TITLE_ICONS:
+        return  # pas d'état arbitré : jamais de titre partiel
+    project = ticket.get("repo") or DEFAULT_BOARD
+    name = format_title(project, ticket["issue_number"],
+                        ticket.get("title", ""), state)
     try:
         sh([sys.executable, str(DISCORD_HELPER), "rename", tid, name])
     except Exception:
@@ -493,7 +537,7 @@ def make_gate_node(step: dict, max_iter: int = 10, labels: dict | None = None):
     au lieu de reboucler indéfiniment sur on_fail.
     """
     expr = step.get("check", "True")
-    labels = labels or DEFAULT_STATUS_LABELS
+    labels = labels or {}
 
     def node(state: WFState) -> dict:
         ctx = {
