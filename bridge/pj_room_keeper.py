@@ -222,6 +222,333 @@ def serve_card(room_id: str, task_id: str, dry: bool) -> str | None:
     return action
 
 
+# --- écrivain UNIQUE du titre du fil (#19, slice 4) ------------------------
+# Le keeper devient le PORTEUR de l'écriture du nom : il lit l'état de la carte,
+# compose le titre arbitré (formateur pur de la slice 3) et renomme AU PLUS une
+# fois par fil et par fenêtre — Discord plafonne les `PATCH name` (la 3ᵉ rend
+# 429, `retry_after` ≈ 600 s). Le renommage est AJOUTÉ après le traitement des
+# rooms et reste best-effort : il ne conditionne aucune transition de carte.
+STATES = ("startup", "in_progress", "blocked", "done")
+TITLE_PRIORITY = ("blocked", "done", "in_progress", "startup")   # index 0 = max
+TITLE_WINDOW = 600      # secondes : au plus un renommage par fil et par fenêtre
+HUMAN_WAIT_KINDS = ("needs_input", "capability")
+_STATE_BY_STATUS = {
+    "todo": "startup",
+    "running": "in_progress",
+    "ready": "in_progress",
+    "blocked": "blocked",
+    "done": "done",
+    "archived": "done",
+}
+DISCORD_HELPER = Path(os.environ.get("PJ_DISCORD_HELPER")
+                      or (Path.home() / ".hermes" / "scripts" / "discord_thread.py"))
+_ENGINE_DONE = False
+_ENGINE_MOD = None
+
+
+def _engine():
+    """Charge `pipeline/engine.py` (formateur + lecteur du nom) — SEULE source.
+
+    Import PARESSEUX et défensif : le keeper tourne sur l'interpréteur du cron,
+    qui peut ne pas porter les dépendances du moteur (`yaml`, `langgraph`).
+    L'échec est bénin : sans moteur aucun titre n'est écrit (best-effort) et les
+    rooms restent servies. `PJ_ENGINE_PY` permet de nommer la copie déployée.
+    """
+    global _ENGINE_DONE, _ENGINE_MOD
+    if _ENGINE_DONE:
+        return _ENGINE_MOD
+    _ENGINE_DONE = True
+    import importlib.util
+    chemin = Path(os.environ.get("PJ_ENGINE_PY")
+                  or (WORKFLOW_ROOT / "pipeline" / "engine.py"))
+    try:
+        if str(chemin.parent) not in sys.path:
+            sys.path.insert(0, str(chemin.parent))
+        spec = importlib.util.spec_from_file_location("pj_keeper_engine", str(chemin))
+        if spec is None or spec.loader is None:
+            raise ImportError(f"module illisible: {chemin}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _ENGINE_MOD = mod
+    except Exception as e:
+        log(f"titre: moteur indisponible ({e.__class__.__name__}: {e}) — aucun titre ecrit")
+        _ENGINE_MOD = None
+    return _ENGINE_MOD
+
+
+def _compose_name(project, ticket, title, state):
+    """Nom arbitré du fil (formateur de la slice 3), ou None s'il est inatteignable."""
+    eng = _engine()
+    if eng is None:
+        return None
+    try:
+        return eng.format_title(project, ticket, title, state)
+    except Exception:
+        return None
+
+
+def resolve_thread(issue_number):
+    """Fil Discord d'une issue — délégué au LECTEUR unique (slice 2, `engine`).
+
+    `None` = fil non résolu : la carte est OMISE, jamais renommée à l'aveugle.
+    Sans moteur (dépendances absentes) ou sans `ISSUE_CHANNEL` configuré, le
+    keeper ne devine pas : il ne renomme que les fils qu'il a identifiés.
+    """
+    eng = _engine()
+    if eng is None or not getattr(eng, "resolve_thread", None):
+        return None
+    try:
+        return eng.resolve_thread(int(issue_number))
+    except Exception:
+        return None
+
+
+def _issue_number_of(card):
+    """Numéro d'issue d'une carte : champ explicite, sinon ancre de la ligne d'import.
+
+    `list --json` ne porte pas `issue_number` : la carte réelle l'écrit dans son
+    body (`Importé depuis …/issues/N`). On n'accepte que l'ancre d'import, jamais
+    le premier `/issues/N` venu (une carte en cite souvent d'autres).
+    """
+    n = (card or {}).get("issue_number")
+    if n is not None:
+        try:
+            return int(n)
+        except (TypeError, ValueError):
+            pass
+    body = str((card or {}).get("body") or "")
+    m = re.search(r"(?m)^\s*Import[^\n]*?github\.com/[^/\s]+/[^/\s]+/issues/(\d+)", body)
+    if m is None:
+        m = re.search(r"github\.com/[^/\s]+/[^/\s]+/issues/(\d+)", body)
+    return int(m.group(1)) if m else None
+
+
+def _discord_rename(thread_id, name):
+    """Adaptateur d'écriture RÉEL du nom (helper Discord). Jamais appelé par un banc.
+
+    Best-effort : un refus de l'API est rendu comme verdict, jamais propagé.
+    """
+    try:
+        r = subprocess.run([sys.executable, str(DISCORD_HELPER), "rename",
+                            str(thread_id), str(name)],
+                           capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        return {"ok": False, "retry_after": None,
+                "detail": f"{e.__class__.__name__}: {e}"}
+    if r.returncode == 0:
+        return {"ok": True}
+    detail = f"{r.stdout or ''}{r.stderr or ''}".strip()
+    m = re.search(r"retry_after\D{0,10}([0-9]+(?:\.[0-9]+)?)", detail)
+    return {"ok": False, "retry_after": float(m.group(1)) if m else None,
+            "detail": detail[:300] or f"exit {r.returncode}"}
+
+
+def title_book_path(path=None):
+    """Fichier d'état du keeper portant la fenêtre de coalescence (un par board)."""
+    if path is not None:
+        return Path(path)
+    base = Path(os.environ.get("PJ_KEEPER_STATE_DIR")
+                or (Path.home() / ".hermes" / "state"))
+    return base / f"pj_room_keeper_{BOARD or 'board'}_titles.json"
+
+
+def load_title_book(path=None):
+    """Livre de coalescence relu du disque. {} si absent ou illisible — NE LÈVE JAMAIS."""
+    try:
+        data = json.loads(Path(title_book_path(path)).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_title_book(book, path=None):
+    """Écrit le livre (JSON lisible) ; crée le répertoire parent au besoin."""
+    p = title_book_path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(book or {}, ensure_ascii=False, indent=1, sort_keys=True),
+                 encoding="utf-8")
+
+
+def card_title_state(card):
+    """État arbitré d'une carte, ou None si le statut est hors nomenclature.
+
+    Une attente HUMAINE (`block_kind` needs_input / capability) porte ⚠ quel que
+    soit le statut ; `dependency` n'attend PAS l'humain (elle repart seule), elle
+    ne doit donc pas produire d'⚠ abusif. Aucun état inventé : un statut inconnu
+    ne produit aucun titre.
+    """
+    card = card or {}
+    if str(card.get("block_kind") or "") in HUMAN_WAIT_KINDS:
+        return "blocked"
+    if str(card.get("status") or "") == "blocked":
+        return "blocked"
+    return _STATE_BY_STATUS.get(str(card.get("status") or ""))
+
+
+def best_title_state(states):
+    """État le plus prioritaire de `states` (⚠ > 🛑 > ⚙️ > 🎬) ; None si vide."""
+    if not states:
+        return None
+    for state in TITLE_PRIORITY:
+        if state in states:
+            return state
+    return None
+
+
+def _verdict(thread_id, action, state, ok, retry_after, detail):
+    return {"thread_id": thread_id, "action": action, "state": state,
+            "ok": ok, "retry_after": retry_after, "detail": detail}
+
+
+def _sync_one(thread_id, state, name, write, book, now, window, dry):
+    """Un fil : au plus une écriture par fenêtre, best-effort. NE LÈVE JAMAIS."""
+    if not name:
+        # Un nom vide est OMIS — jamais un placeholder — et ne consomme pas la fenêtre.
+        return _verdict(thread_id, "skip", state, None, None, None)
+    entry = book.setdefault(thread_id, {})
+    ts = entry.get("ts")
+    try:
+        ts_f = float(ts) if ts is not None else None
+    except (TypeError, ValueError):
+        ts_f = None
+    if ts_f is not None and entry.get("state") == state:
+        # Le nom est déjà en place : réécrire consommerait le quota de renommage.
+        return _verdict(thread_id, "skip", state, None, None, None)
+    if ts_f is not None and now < ts_f + window:
+        # État différent DANS la fenêtre : on mémorise le plus prioritaire, on différe.
+        entry["pending"] = best_title_state([entry.get("pending"), state]) or state
+        return _verdict(thread_id, "defer", state, None, None, None)
+    if dry:
+        return _verdict(thread_id, "rename", state, None, None, None)
+    try:
+        res = write(thread_id, name) or {}
+        ok = res.get("ok") is True
+        retry_after = res.get("retry_after")
+        detail = res.get("detail")
+    except Exception as e:
+        ok, retry_after, detail = False, None, f"{e.__class__.__name__}: {e}"
+    if ok:
+        entry["ts"] = float(now)
+        entry["state"] = state
+        entry.pop("pending", None)          # le report est soldé
+        return _verdict(thread_id, "rename", state, True, retry_after, detail)
+    # Un refus ne date PAS un succès (le quota n'est pas consommé) -> reprise au tick suivant.
+    entry["state"] = state
+    entry.setdefault("failures", []).append(
+        {"ts": float(now), "state": state, "retry_after": retry_after,
+         "detail": str(detail or "")[:300]})
+    return _verdict(thread_id, "rename", state, False, retry_after, detail)
+
+
+def sync_titles(tickets, write, book, now, dry=False, window=TITLE_WINDOW):
+    """Synchronise les titres : au plus UN renommage par fil et par fenêtre.
+
+    `tickets` = [{"thread_id", "state", "name"}] ; `write` = adaptateur INJECTÉ
+    `write(thread_id, name) -> dict` (succès ssi `ok is True`) ; `book` = livre de
+    coalescence MUTÉ en place ; retour = un verdict par ticket, dans l'ordre.
+    Deux cartes d'un même fil ne produisent qu'UNE écriture (l'état le plus
+    prioritaire gagne). NE LÈVE JAMAIS : un refus ou une exception est tracé.
+    """
+    tix = list(tickets or [])
+    out = [None] * len(tix)
+    groupes, index = [], {}
+    for i, brut in enumerate(tix):
+        t = brut or {}
+        tid, state = t.get("thread_id"), t.get("state")
+        if not tid or state not in STATES or not t.get("name"):
+            out[i] = _verdict(tid, "skip", state, None, None, None)
+            continue
+        if tid not in index:
+            index[tid] = len(groupes)
+            groupes.append([tid, t, []])
+        g = groupes[index[tid]]
+        if best_title_state([g[1]["state"], state]) != g[1]["state"]:
+            g[1] = t
+        g[2].append(i)
+    for tid, t, idxs in groupes:
+        try:
+            v = _sync_one(tid, t["state"], t["name"], write, book, now, window, dry)
+        except Exception as e:
+            v = _verdict(tid, "skip", t.get("state"), False, None,
+                         f"{e.__class__.__name__}: {e}")
+        for i in idxs:
+            out[i] = dict(v)
+    return out
+
+
+def tickets_for_titles(cards, board=""):
+    """Fils à renommer, un ticket par carte résolue : [{thread_id, state, name}].
+
+    Une carte SANS fil résolu (`resolve_thread` -> None) ou SANS état arbitré est
+    OMISE : jamais de renommage à l'aveugle, jamais de placeholder.
+    """
+    out = []
+    for card in cards or []:
+        n = _issue_number_of(card)
+        if n is None:
+            continue
+        state = card_title_state(card)
+        if state is None:
+            continue
+        tid = resolve_thread(n)
+        if not tid:
+            continue
+        project = (str((card or {}).get("repo") or "")
+                   or (os.environ.get("GH_REPO") or "").rsplit("/", 1)[-1]
+                   or board or BOARD or "board")
+        name = _compose_name(project, n, str((card or {}).get("title") or ""), state)
+        if not name:
+            continue
+        out.append({"thread_id": str(tid), "state": state, "name": name})
+    return out
+
+
+def sync_all_titles(cards, write, book, now=None, dry=False):
+    """Câble `tickets_for_titles` + `sync_titles` sur les cartes du board.
+
+    Best-effort : NE LÈVE JAMAIS (un refus de l'API ne tue pas le tick). Un fil
+    partagé par plusieurs cartes ne reçoit qu'UNE écriture, celle de l'état le
+    plus prioritaire.
+    """
+    if now is None:
+        import time
+        now = time.time()
+    try:
+        tickets = tickets_for_titles(cards, board=BOARD)
+    except Exception as e:
+        log(f"titre: cartes illisibles ({e.__class__.__name__}: {e}) — aucun titre ecrit")
+        return []
+    par_fil, ordre = {}, []
+    for t in tickets:
+        tid = t["thread_id"]
+        if tid not in par_fil:
+            par_fil[tid] = t
+            ordre.append(tid)
+        elif best_title_state([par_fil[tid]["state"], t["state"]]) != par_fil[tid]["state"]:
+            par_fil[tid] = t
+    return sync_titles([par_fil[k] for k in ordre], write, book, now, dry=dry)
+
+
+def _sync_board_titles(cards, dry=False):
+    """Renommage des titres — AJOUTÉ après le traitement des rooms, best-effort.
+
+    Appelé en fin de cycle uniquement : aucune transition de room ou de carte n'en
+    dépend (garde-fou de la slice 4). Le livre est persisté dans le fichier d'état
+    du keeper : la fenêtre survit à un tick muet et à un redémarrage.
+    """
+    try:
+        book = load_title_book()
+        verdicts = sync_all_titles(cards, _discord_rename, book, dry=dry)
+        if verdicts and not dry:
+            save_title_book(book)
+        for v in verdicts:
+            if v.get("action") != "skip":
+                log(f"titre {v.get('thread_id')} [{v.get('state')}] -> {v.get('action')}"
+                    f"{' (refus)' if v.get('ok') is False else ''}")
+    except Exception as e:
+        log(f"ERREUR titre: {e}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="pj_room_keeper.py")
     ap.add_argument("--task", default="")
@@ -233,9 +560,13 @@ def main() -> int:
     try:
         if a.task:
             show = json.loads(sh("show", a.task, "--json"))
-            rid = room_from_body((show.get("task") or show).get("body") or "")
+            card = show.get("task") or show
+            rid = room_from_body(card.get("body") or "")
             if rid:
                 serve_card(rid, a.task, a.dry_run)
+            # Renommage AJOUTÉ après le traitement de la room : il ne conditionne
+            # aucune transition (garde-fou slice 4).
+            _sync_board_titles([card], a.dry_run)
             return 0
         cards = json.loads(sh("list", "--json")) or []
         served = 0
@@ -245,6 +576,8 @@ def main() -> int:
                     served += 1
             except Exception as e:
                 log(f"ERREUR {tid} ({rid}): {e}")
+        # Renommage AJOUTÉ en fin de cycle, après le traitement des rooms.
+        _sync_board_titles(cards, a.dry_run)
         if not served and a.dry_run:
             log("tick muet (aucune room à servir)")
         return 0
