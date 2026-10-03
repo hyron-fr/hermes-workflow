@@ -32,7 +32,7 @@ import subprocess
 logger = logging.getLogger(__name__)
 
 HERMES_BIN = os.path.expanduser("~/.hermes/hermes-agent/venv/bin/hermes")
-THREAD_NAME_RE = re.compile(r"^\s*([A-Za-z0-9._-]+)\s*#(\d+)")
+THREAD_NAME_RE = re.compile(r"^\s*(?:\S+\s+)?([A-Za-z0-9._-]+)(?:\s*#|\|#)(\d+)")
 
 
 def parse_custom_id(custom_id: str):

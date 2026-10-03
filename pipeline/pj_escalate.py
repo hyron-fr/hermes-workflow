@@ -259,6 +259,12 @@ def thread_index(cfg: EscalationConfig, *, runner=subprocess.run) -> dict[tuple[
         tid, name = parts[0], parts[1]
         for repo in known_repos(cfg):
             m = re.match(re.escape(repo) + r"\s+#(\d+)\b", name)
+            if not m:
+                # Élargissement #19 : « <icône> <repo>|#<n>|<titre> ». L'icône de tête
+                # est optionnelle ; l'identité `repo|#n` reste l'ancre (jamais un `#n`
+                # orphelin, jamais le repo d'un autre dépôt). Les deux formats
+                # coexistent : l'ancien « <repo> #n · … » est résolu par le motif ci-dessus.
+                m = re.match(r"(?:\S+\s+)?" + re.escape(repo) + r"\|#0*(\d+)\b", name)
             if m:
                 out.setdefault((repo, int(m.group(1))), tid)
                 break

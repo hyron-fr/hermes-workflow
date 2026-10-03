@@ -75,9 +75,18 @@ def resolve_thread(issue_number: int) -> str | None:
         out = sh([sys.executable, str(DISCORD_HELPER), "threads",
                   ISSUE_CHANNEL, DISCORD_GUILD])
         pat = re.compile(rf"issue\s*#?\s*{issue_number}\b", re.IGNORECASE)
+        # Élargissement #19 : le fil peut porter « <icône> <repo>|#<n>|<titre> ».
+        # L'identité `repo|#n` est l'ancre — scopée au repo écrit (GH_REPO, dernier
+        # segment du slug) pour ne jamais rendre le fil d'un autre dépôt ; le motif
+        # historique « issue #N » reste, les deux formats coexistent.
+        repo = (GH_REPO or "").rsplit("/", 1)[-1]
+        pat_nouveau = (re.compile(rf"{re.escape(repo)}\|#0*{issue_number}(?!\d)",
+                                  re.IGNORECASE) if repo else None)
         for line in out.splitlines():
             parts = line.split(" ", 1)
-            if len(parts) == 2 and pat.search(parts[1]):
+            if len(parts) == 2 and (pat.search(parts[1])
+                                    or (pat_nouveau is not None
+                                        and pat_nouveau.search(parts[1]))):
                 tid = parts[0]
                 break
     except Exception:
