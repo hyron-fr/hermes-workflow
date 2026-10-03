@@ -79,9 +79,7 @@ Le banc est **pur et déterministe** : 0 réseau, 0 sous-processus — `sh` et
 `subprocess.run` du module chargé sont empoisonnés (tout appel levé), les sources
 (slices.json, `gh pr list`, `gh issue view`) sont injectées.
 """
-import contextlib
 import importlib.util
-import io
 import sys
 from pathlib import Path
 
