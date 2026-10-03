@@ -256,8 +256,10 @@ core, puis injectée.
 
 4. **coalescence du renommage** : Discord plafonne à ~3 renommages par fenêtre
    (3ᵉ `PATCH name` → 429, `retry_after` ≈ 600 s). Un seul écrivain (le
-   keeper), renommage best-effort, priorité `⚠ > 🛑 > ⚙️ > 🎬`. C'est l'objet de
-   la slice 4 (keeper), pas encore livrée à la date de cette note.
+   keeper), renommage best-effort, priorité `⚠ > 🛑 > ⚙️ > 🎬`. **Résolu par la
+   slice 4** (`keeper-ecrivain-unique-titre`, commit `422878f`) : le keeper est
+   l'écrivain unique, coalescé par fenêtre de 600 s — voir [[pj-thread-name]]
+   (section « L'écrivain unique du titre et la coalescence »).
 
 _La « rétro-compatibilité des résolveurs » (anciennement point 4) est **résolue**
 par la slice 2 : les 3 lecteurs acceptent le nouveau **et** l'ancien format — voir

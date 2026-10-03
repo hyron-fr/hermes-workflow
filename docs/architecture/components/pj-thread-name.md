@@ -147,6 +147,73 @@ d'un **autre dépôt** n'est jamais attribué au dépôt écouté.
   thread n'est **pas retrouvé** (l'étape retombe alors sur le canal), jamais un
   fil voisin : `#194` n'est pas confondu avec `#19` (`(?!\d)` borne le numéro).
 
+## L'écrivain unique du titre et la coalescence (slice 4)
+
+La slice 4 (`keeper-ecrivain-unique-titre`, commit `422878f`) fait du
+`pipeline/pj_room_keeper.py` (et son miroir `bridge/pj_room_keeper.py`, copies
+identiques) **le seul écrivain du titre du thread**. Avant cette slice, le
+`rename_thread` du moteur (`pipeline/engine.py`) renommait le thread à chaque
+transition d'étape du workflow YAML ; désormais le keeper est le **porteur unique**
+de l'écriture, coalescée par fenêtre.
+
+### Règle d'écriture unique
+
+- **Un seul écrivain** : le keeper (`_sync_board_titles` → `sync_all_titles` →
+  `sync_titles`). Le `rename_thread` du moteur n'appelle plus le helper Discord
+  directement ; le keeper compose le nom (via le formateur pur `format_title` de
+  la slice 3) et l'écrit via l'adaptateur `_discord_rename`.
+- **Aucun renommage à l'aveugle** : une carte sans fil résolu
+  (`resolve_thread` → `None`) ou sans état arbitré (`card_title_state` → `None`)
+  est **omise**, jamais renommée à l'aveugle, jamais remplacée par un
+  placeholder.
+- **Priorité des états** : `TITLE_PRIORITY = ("blocked", "done", "in_progress",
+  "startup")` — l'index 0 a la priorité max (⚠ > 🛑 > ⚙️ > 🎬). Deux états
+  contradictoires pour le même fil dans le même cycle → l'état le plus prioritaire
+  gagne (une seule écriture).
+
+### Fenêtre de coalescence (contrainte d'infra Discord)
+
+Discord plafonne les renommages : ~3 `PATCH name` par fenêtre, la 3ᵉ rend **429**
+avec `retry_after` ≈ 600 s. C'est une **contrainte d'infrastructure**, pas un
+paramètre de réglage. Le keeper en tient compte :
+
+- **`TITLE_WINDOW = 600` s** : au plus **un renommage par fil et par fenêtre**.
+- Le **livre de coalescence** (`load_title_book` / `save_title_book`,
+  `pj_room_keeper_<board>_titles.json`) porte la date du dernier succès (`ts`) et
+  l'état écrit (`state`) par fil. Il **survit au redémarrage** (JSON persistant,
+  ne lève jamais à la lecture).
+- État inchangé depuis le dernier succès → **skip** (aucune écriture, la fenêtre
+  n'est pas consommée).
+- État différent **dans** la fenêtre → **defer** (état mémorisé dans `pending`,
+  renommage différé au cycle suivant quand la fenêtre expire).
+- État différent **hors** fenêtre → **rename** (le report est soldé).
+- **Un refus (429) ne consomme PAS la fenêtre** : il n'écrit pas `ts` (le quota
+  n'est pas consommé par un refus), l'échec est **tracé** dans le livre
+  (`failures[]` avec fil + `retry_after`) et la reprise a lieu au **tick suivant**.
+- **Best-effort** : le renommage est **ajouté après** le traitement des rooms ;
+  il ne conditionne **aucune** transition de carte ni de room. Un échec (429,
+  exception, moteur indisponible) est loggé et **ne casse jamais le pipeline**.
+
+### Délai maximal attendu (garde-fou de lecture)
+
+Le titre est **best-effort** et **asynchrone** : entre une transition d'état
+réelle et le renommage effectif du fil, il peut s'écouler **jusqu'à une fenêtre
+de 600 s** si un état antérieur a été écrit dans la fenêtre (report différé) ou
+si le cycle du keeper est espacé. **Le titre ne suit donc pas l'état
+immédiatement** — un lecteur qui s'attendrait à un renommage synchrone/
+instantané se tromperait. Le nom du fil est une **vue miroir différée** de
+l'état ; la source de vérité reste le board kanban + l'issue GitHub.
+
+### Contrat gelé (banc slice 4)
+
+`tests/test_thread_state_writer.py` (17 cas : 6 nominal, 5 limite, 6 erreur) +
+les extensions de `tests/test_pj_room_keeper.py` (3 cas niveau cycle) gèlent le
+contrat d'interface : `STATES`, `TITLE_PRIORITY`, `TITLE_WINDOW`,
+`card_title_state`, `best_title_state`, `load_title_book`, `save_title_book`,
+`sync_titles` (verdict par ticket, jamais lève), `tickets_for_titles`,
+`sync_all_titles`. Le banc est pur et déterministe (horloge et adaptateur
+injectés, `sh` empoisonné — jamais d'appel Discord).
+
 ## Règle de non-régression
 
 Deux bancs gèlent le contrat, en **deux étages** :
