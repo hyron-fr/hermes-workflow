@@ -147,3 +147,74 @@ def test_unblock_does_not_repeat_after_stop(kp):
     assert kp.decide(room_state="livelock", card_status="running", reported=False) == "unblock"
     # 2) après le stop, l'état remonte par pj_room est `done` -> report, pas unblock
     assert kp.decide(room_state="done", card_status="running", reported=False) == "report"
+
+
+# ---------------------------------------- écrivain UNIQUE du titre (#19, slice 4) ---
+# Le renommage est AJOUTÉ après le traitement des rooms : une transition de carte
+# (`report`, `disband`) ne dépend JAMAIS d'un renommage réussi. Le banc juge ce câblage
+# au niveau du CYCLE ; le détail de la coalescence est jugé par test_thread_state_writer.py.
+
+T4_TICKET_NAME = "\u2699\ufe0f hermes-workflow|#19|Discord thread title and description update"
+
+
+def _cards():
+    return [
+        {"id": "t19a", "status": "running", "issue_number": 19,
+         "title": "Discord thread title and description update", "repo": "hermes-workflow"},
+        {"id": "t19b", "status": "blocked", "issue_number": 19,
+         "title": "Discord thread title and description update", "repo": "hermes-workflow"},
+        {"id": "t42", "status": "running", "issue_number": 42,
+         "title": "sans fil résolu", "repo": "hermes-workflow"},
+    ]
+
+
+def test_tickets_for_titles_ne_garde_que_les_fils_resolus(kp):
+    """Le cycle ne renomme QUE les cartes dont le fil est résolu (issue présente dans le nom).
+
+    `resolve_thread` est injecté : la carte #42 n'a pas de fil -> elle est OMISE, jamais
+    renommée à l'aveugle.
+    """
+    kp.resolve_thread = lambda n: ("1470000000000000019" if int(n) == 19 else None)
+    tix = kp.tickets_for_titles(_cards(), board="pj-hermes-workflow")
+    assert isinstance(tix, list) and tix, "l'API tickets_for_titles doit rendre une liste de tickets"
+    assert {t["thread_id"] for t in tix} == {"1470000000000000019"}, (
+        f"seul le fil résolu doit être proposé au renommage : {tix!r}"
+    )
+    etats = {t["state"] for t in tix}
+    assert etats == {"in_progress", "blocked"}, (
+        f"le statut de la carte choisit l'état : {tix!r}"
+    )
+    assert all("|#19|" in t["name"] for t in tix), (
+        f"chaque nom proposé porte l'identité arbitrée : {tix!r}"
+    )
+
+
+def test_sync_all_titles_n_ecrit_qu_une_fois_par_fil(kp):
+    """Le cycle écrit au plus un nom par fil, et la priorité ⚠ l'emporte sur ⚙️."""
+    kp.resolve_thread = lambda n: "1470000000000000019"
+    book = {}
+    calls = []
+
+    def write(thread_id, name):
+        calls.append((thread_id, name))
+        return {"ok": True}
+
+    out = kp.sync_all_titles(_cards(), write, book, now=1000.0)
+    assert len(calls) == 1, f"le fil #19 ne doit être écrit qu'UNE fois par cycle : {calls!r}"
+    assert calls[0][1].startswith("\u26a0"), (
+        f"deux états pour le même fil -> ⚠ gagne : {calls[0]!r}"
+    )
+    assert isinstance(out, list) and out and out[0]["action"] == "rename", f"{out!r}"
+
+
+def test_sync_all_titles_ne_leve_jamais_meme_si_l_adaptateur_leve(kp):
+    """ERREUR — un échec d'écriture est rattrapé : aucune délibération n'est bloquée par lui."""
+    kp.resolve_thread = lambda n: "1470000000000000019"
+
+    def write(thread_id, name):
+        raise RuntimeError("429 rate limited (retry_after=600)")
+
+    out = kp.sync_all_titles(_cards(), write, {}, now=1000.0)   # ne doit PAS lever
+    assert isinstance(out, list) and out, f"le cycle doit rendre un verdict lisible : {out!r}"
+    assert all(v["ok"] is False for v in out), f"l'échec doit être nommé, jamais avalé : {out!r}"
+
