@@ -142,20 +142,21 @@ La spec (body de l'issue) est la source de vérité, **précisée par l'arbitrag
 humain du 02/10/2026** (Q1 = 1a, Q2 = 2b, Q3 = d). Le format **arbitré** est
 littéral — `<icône> <repo>|#<numéro d'issue>|<titre de l'issue>` — avec un jeu
 d'icônes fermé (🎬 ⚙️ ⚠ 🛑) et une description en **message dédié épinglé**
-(3 lignes : issue / branche / PR). Deux contrats restent à figer dans le code :
+(3 lignes : issue / branche / PR). Deux contrats, **figés par les slices 2 et 3**
+(donc livrés, documentés dans [[pj-thread-name]]) :
 
 1. la **forme exacte du titre** (séparateur `|`, ordre `repo|#n|titre`, icône en
-   tête, identité fixe d'un état à l'autre) — vérifiable par une fonction de
-   formatage pure, pas par un appel réseau ;
-2. la **table d'état → icône** (4 états, bijection) — testable sans Discord.
+   tête, identité fixe d'un état à l'autre) — `format_title` / `title_icon`, une
+   fonction de formatage pure, pas un appel réseau ;
+2. la **table d'état → icône** (`TITLE_ICONS`, 4 états, bijection) — testable
+   sans Discord.
 
-Le format **n'existe pas encore dans le code** : il est matérialisé par la
-maquette inerte `issue-19-maquette.html` (versionnée, commit `12abc16`) et
-mesuré par `issue-19-maquette.measure.py`, qui figent **les totaux** (préfixe
-22 car., 23 avec ⚙️, budget de titre 78, nom actuel 65) et **les 3 lecteurs du
-nom** (`engine.resolve_thread`, `pj_escalate.thread_index`,
-`pj-buttons.THREAD_NAME_RE`) comme contrat rejouable avant toute implémentation.
-La maquette est un **objectif arbitré**, pas un constat du livré.
+Le format, initialement matérialisé par la maquette inerte
+`issue-19-maquette.html` (versionnée, commit `12abc16`) et mesuré par
+`issue-19-maquette.measure.py` (les totaux — préfixe 22 car., 23 avec ⚙️, budget
+de titre 78, nom actuel 65 — et les 3 lecteurs du nom comme contrat rejouable),
+est **désormais implémenté** par la slice 3 : la maquette fut l'objectif arbitré,
+le formateur pur du moteur en est le livré.
 
 ## Lecture DDD
 
@@ -189,17 +190,19 @@ Les contrats à figer sont **purs** (aucun réseau, aucune horloge) :
 3. **rétro-compatibilité des résolveurs** : `resolve_thread`, `thread_index` et
    `THREAD_NAME_RE` (pj-buttons) doivent **continuer** à retrouver le thread
    après le changement de format. C'est le contrat de non-régression critique :
-   les trois parseurs actuels (`issue #N`, `repo #N`, `^repo #N`) **ne matchent
-   plus** le format `repo|#N|title` — mesuré sur la maquette : les 3 lecteurs
-   rendent `None` sur le nouveau format. Le RED ici est « un thread renommé au
-   nouveau format n'est plus retrouvé » — le GREEN doit couvrir **les deux
-   formats** (les 18 fils vivants portent l'ancien `hermes-workflow #N · …`),
-   ou faire évoluer les résolveurs dans la même slice.
+   les trois parseurs d'avant #19 (`issue #N`, `repo #N`, `^repo #N`) **ne
+   matchaient plus** le format `repo|#N|title` — mesuré sur la maquette : les 3
+   lecteurs rendaient `None` sur le nouveau format. Ce RED a été **résolu par la
+   slice 2** (`lecteurs-nom-deux-formats`) : les trois lecteurs acceptent
+   désormais le nouveau format **et** leur ancien format (coexistence, jamais
+   migration — les 18 fils vivants portent l'ancien `hermes-workflow #N · …`).
 
 Le RED/GREEN de l'issue : tant qu'un résolveur ne retrouve pas un thread
 renommé `<icône> <repo>|#<n>|<titre>`, l'issue n'est pas résolue — le
 renommage seul (sans mise à jour des trois consommateurs du nom) est un faux
 vert qui casse la notification d'étape, l'escalade et les boutons de décision.
+Ce contrat de lecture est gelé par `tests/test_thread_name_resolvers.py` ; le
+contrat d'écriture (formateur + table) par les bancs de la slice 3.
 
 ## Lecture hexagonale
 
@@ -245,17 +248,20 @@ core, puis injectée.
 3. **grammaire exacte** → **Q1 = 1a** : `<icône> <repo>|#<numéro d'issue>|<titre
    de l'issue>` — `<repo>` = slug `hermes-workflow`, `<ticket>` = numéro d'issue
    GitHub, identité fixe d'un état à l'autre. L'échappement d'un `|` présent
-   dans le titre d'origine reste à préciser en implémentation.
+   dans le titre d'origine a été **tranché en implémentation** (slice 3) : le
+   `|` est **conservé** tel quel, aucun échappement — `repo` et `#n` restent les
+   deux premiers segments.
 
 **Restantes (portées aux slices suivantes, non tranchées ici)** :
 
-4. **rétro-compatibilité des résolveurs** : les 3 lecteurs (`resolve_thread`,
-   `thread_index`, `THREAD_NAME_RE`) rendent `None` sur le nouveau format
-   (mesuré). Les faire évoluer pour accepter **les deux formats** est **imposé
-   par le contrat de non-régression**, pas optionnel.
-5. **coalescence du renommage** : Discord plafonne à ~3 renommages par fenêtre
+4. **coalescence du renommage** : Discord plafonne à ~3 renommages par fenêtre
    (3ᵉ `PATCH name` → 429, `retry_after` ≈ 600 s). Un seul écrivain (le
-   keeper), renommage best-effort, priorité `⚠ > 🛑 > ⚙️ > 🎬`.
+   keeper), renommage best-effort, priorité `⚠ > 🛑 > ⚙️ > 🎬`. C'est l'objet de
+   la slice 4 (keeper), pas encore livrée à la date de cette note.
+
+_La « rétro-compatibilité des résolveurs » (anciennement point 4) est **résolue**
+par la slice 2 : les 3 lecteurs acceptent le nouveau **et** l'ancien format — voir
+[[pj-thread-name]]._
 
 ## Hors-scope (à confirmer)
 

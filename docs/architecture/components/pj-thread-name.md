@@ -18,9 +18,10 @@ pars**ent** est une régression silencieuse qui désactive la notification d'ét
 l'escalade et les boutons de décision.
 
 Le cadrage complet est dans [[issue-19]]. Cette note documente **le livré**
-(slice 2 `lecteurs-nom-deux-formats`, commit `b1ed6b4`) : les deux formats
-acceptés, les trois lecteurs, et la règle de non-régression — pas un motif cible
-non implémenté.
+(slices 2 `lecteurs-nom-deux-formats` + 3 `titre-4-etats-formateur-pur`, commits
+`b1ed6b4` et `1887dad`) : les deux formats acceptés, le formateur pur et la table
+des 4 états, les trois lecteurs, et la règle de non-régression — pas un motif
+cible non implémenté.
 
 ## Les deux formats acceptés
 
@@ -37,6 +38,69 @@ ancien (avant #19)       : dépend du lecteur — voir ci-dessous
 Il n'existe **pas un** ancien format unique : chaque lecteur parle son propre
 vocabulaire d'avant #19, et chacun le **conserve** (coexistence, jamais
 migration — 18 fils vivants portent encore l'ancienne forme).
+
+## Le formateur pur et la table des 4 états (slice 3)
+
+Le **producteur** du nouveau format est un **formateur pur** livré par la slice 3
+(`titre-4-etats-formateur-pur`, commit `1887dad`) : une table d'états fermée et
+une fonction de composition, **sans réseau, sans horloge, sans aléa**. Il est le
+seul écrivain de nom ; les trois lecteurs de la section suivante n'écrivent jamais.
+
+### La table `TITLE_ICONS` (bijection état → icône)
+
+`pipeline/engine.py` L207–212 — la **seule** source d'icônes ; elle remplace
+l'ancien jeu de libellés de statut du moteur (`DEFAULT_STATUS_LABELS`, supprimé).
+Bijection : une icône par état, jamais deux fois la même.
+
+| état arbitré | icône | codepoints | sens humain |
+|---|---|---|---|
+| `startup` | 🎬 | `U+1F3AC` | démarrage — jusqu'à la validation du plan |
+| `in_progress` | ⚙️ | `U+2699` **+ VS16** (`U+FE0F`) | les agents travaillent |
+| `blocked` | ⚠ | `U+26A0` **sans** VS16 | intervention humaine requise |
+| `done` | 🛑 | `U+1F6D1` | terminé |
+
+Les codepoints sont ceux écrits par l'humain (relus au GET sur le message
+d'arbitrage) : `⚙️` porte le VS16, `⚠` **ne le porte pas**. Le marqueur `👆`
+(option écartée par Q3 = d) est **mort** : aucun état ne le produit, il ne figure
+pas dans la table. Le jeu historique `✅ done / ❌ fail / 🔁 retry` n'a plus cours.
+
+### `format_title(project, ticket, title, state)` (formateur pur)
+
+`pipeline/engine.py` L226–239 — compose `<icône> <project>|#<ticket>|<titre>` :
+
+- l'icône vient de `title_icon(state)` (L233), qui **refuse** un état hors table
+  (`ValueError` nommant l'état) *avant* toute composition ;
+- le `ticket` doit être un entier (pas `bool`) — sinon `TypeError`, jamais un
+  `#abc` inventé ;
+- l'identité `project|#ticket|` est **fixe d'un état à l'autre** : seule l'icône
+  de tête change ;
+- un `|` déjà présent dans le titre d'origine est **conservé** (aucun
+  échappement) : `project` et `#ticket` restent les deux premiers segments.
+
+**Borne de longueur** (le contrat de troncature) : le nom complet est borné à
+`NAME_MAX = 100` (borne Discord, L206). La coupe porte sur la **fin du titre** —
+`prefix = f"{icon} {project}|#{n}|"`, puis `budget = NAME_MAX - len(prefix)`, et le
+titre est coupé à `[:budget]`. L'identité `repo|#n` n'est **jamais** coupée (elle
+est en tête, avant la coupe) ; un titre vide donne un nom valide réduit à
+l'identité, **sans placeholder**.
+
+### `rename_thread` — l'écrivain best-effort
+
+`pipeline/engine.py` L256–289 — traduit l'état **interne** du moteur
+(`running`/`done`/`fail`/`retry`) en état arbitré, puis délègue au formateur :
+`_OUTCOME_STATE = {"running": "in_progress", "done": "done"}` (L215). Le formateur
+**reçoit** l'état, il ne décide pas de la transition. Un outcome sans équivalent
+arbitré (`fail`, `retry`) **n'écrit aucun titre partiel** (la fonction rend sans
+PATCH). Le renommage est **best-effort** : une exception du helper est avalée,
+elle ne casse jamais le pipeline. Le projet écrit vient de `ticket["repo"]`, repli
+sur `GH_REPO` (basename) puis `DEFAULT_BOARD` (commit `04099bc`).
+
+### La frontière 🎬 → ⚙️
+
+Le passage de l'icône 🎬 (démarrage) à ⚙️ (in progress) correspond à la
+**validation du plan par l'humain** (gate `t5`). C'est une frontière de **mot
+humain**, pas une transition que le formateur calcule : le formateur reçoit l'état
+déjà arbitré, il ne décide jamais du moment de bascule.
 
 ## Les trois lecteurs (motifs livrés, chemins et lignes)
 
@@ -85,7 +149,9 @@ d'un **autre dépôt** n'est jamais attribué au dépôt écouté.
 
 ## Règle de non-régression
 
-Le contrat gelé par le banc `tests/test_thread_name_resolvers.py` (slice 2) :
+Deux bancs gèlent le contrat, en **deux étages** :
+
+**Étage lecture** — `tests/test_thread_name_resolvers.py` (slice 2) :
 
 - les **trois** lecteurs résolvent le nouveau format **et** leur ancien format ;
 - les deux formats **coexistent** dans un même listage (un lecteur rend les deux
@@ -96,8 +162,15 @@ Le contrat gelé par le banc `tests/test_thread_name_resolvers.py` (slice 2) :
   numéro ;
 - un nom **sans ancre d'identité** (`#19 sans repo ni icône`) ne résout rien.
 
+**Étage écriture** — `tests/test_thread_title_format.py` +
+`tests/test_thread_state_source.py` (slice 3) : le formateur est pur, la table est
+bijective et fermée (4 états, `⚠` sans VS16, `⚙️` avec VS16), la borne `NAME_MAX`
+= 100 ne coupe jamais l'identité, un `|` dans le titre est conservé, `👆` et le jeu
+historique `✅/❌/🔁` sont morts, `DEFAULT_STATUS_LABELS` a disparu, et un
+workflow sans table ne produit aucun libellé historique.
+
 Tout futur changement de format du nom **doit** repasser par ces trois lecteurs
-et ce banc : renommer sans les mettre à jour est le faux vert qui casse la
+et ces bancs : renommer sans les mettre à jour est le faux vert qui casse la
 notification d'étape, l'escalade et les boutons de décision.
 
 ## Points d'injection
