@@ -278,7 +278,9 @@ def rename_thread(ticket: dict, step: dict, outcome: str, dry_run: bool,
     state = _state_from_label(labels, label) or _OUTCOME_STATE.get(outcome)
     if state not in TITLE_ICONS:
         return  # pas d'état arbitré : jamais de titre partiel
-    project = ticket.get("repo") or DEFAULT_BOARD
+    project = (ticket.get("repo")
+               or (GH_REPO or "").rsplit("/", 1)[-1]
+               or DEFAULT_BOARD)
     name = format_title(project, ticket["issue_number"],
                         ticket.get("title", ""), state)
     try:
