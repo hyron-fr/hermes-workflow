@@ -17,8 +17,11 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-5]] — Interface de décision humaine pour les cartes bloquées (Discord + GitHub uniquement).
 - [[issue-4]] — Versionner pj_escalate.py (pipeline/) : garde-fou d'état d'issue + résolution de binaire hors PATH.
 - [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
+- [[issue-27]] — « slice 5/5 — convergence » : issue de décision (escalade de la carte conv-5 `t_f725879f` du chantier #19), GREEN dev-5 perdu, banc 10/10 RED ; `/ok` débloque, le re-poussage du GREEN suit.
+- [[issue-29]] — « slice 5/5 — convergence » : miroir de décision de #27 (même carte conv-5 `t_f725879f` du chantier #19, GREEN dev-5 perdu) ; cadrage de convergence/preuve de livraison par couverture commit-à-commit.
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
+- [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
 
 ## Décisions (ADR)
 
@@ -38,3 +41,4 @@ _(peuplé par la carte `doc-k` : chaque ADR sous `decisions/` doit être référ
 - [[pj-notify]] — Émetteur des DEUX notifications d'une décision `/ok` (issue #5, slice 5) : l'enfant notifiée puis fermée, le parent notifié jamais fermé ; dédup par décision (jamais par horloge), non-blocant et jamais silencieux.
 - [[pj-escalate]] — Escalade déterministe des cartes bloquées vers Discord (contrat de variables d'environnement requises/optionnelles, règle « requise absente = refus bruyant », garde d'état d'issue : quatre chemins de doute, quatre avertissements distincts ; chaîne de publication `pj_publish.py` : identité sur le contenu tel qu'il s'exécute, contrôle des exports par motif, 5 étapes du geste dans l'ordre, codes de sortie `2 > 1 > 0`).
 - [[pj-lang-lint]] — deterministic language gate for the English corpus (issue #2, slice 2).
+- [[pj-thread-name]] — Le nom du thread Discord comme value object (issue #19, slices 2–4) : les deux formats acceptés, le formateur pur, la table des 4 états, les trois lecteurs, l'écrivain unique (keeper) et la coalescence par fenêtre de 600 s. (note livrée sur `wt/issue-19-discord-thread-title-description`, en attente de merge de la PR de #19.)
