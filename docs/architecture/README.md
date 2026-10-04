@@ -19,6 +19,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
+- [[issue-28]] — slice 5/5 convergence (issue de décision, point à statuer sur la carte `t_b7953265`) : qualification du blocage, mismatch pipeline/decision documenté, trou de réconciliation de `pj_decision_watch.py` (hors dépôt versionné) exposé.
 
 ## Décisions (ADR)
 
