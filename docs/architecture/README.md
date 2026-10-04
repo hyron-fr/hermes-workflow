@@ -19,6 +19,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
+- [[issue-32]] — slice 5/5 convergence (4ᵉ échelon de la chaîne d'escalade sur la perte du commit GREEN dev-5 `6661362`, issue #19) : carte de décision, 0 slice de dev, cadrage de la chaîne d'escalade et des composants impactés.
 
 ## Décisions (ADR)
 
