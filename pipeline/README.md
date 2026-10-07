@@ -205,6 +205,74 @@ The prompts and commands use `{{...}}`:
 
 ## Traceability
 
+## Wiring `/ok` — `pj_decision_watch.py`
+
+**Why.** Slices 4 and 5 of issue #5 shipped the **pure core** of the decision
+(`pipeline/pj_decision.py`) and the **emitter** of the two notifications
+(`pipeline/pj_notify.py`). Both component notes record the same asymmetry:
+"no production consumer exists — `grep -rn 'pj_decision'` outside the module and
+outside `tests/` returns 0 hits; the wiring belongs to the post-#4 slice". This
+runner **is** that wiring: without it, `/ok` is a grammar nobody reads.
+
+**One tick** (deterministic, 0 LLM):
+
+1. list the repo's **decision children** (label `decision`);
+2. for each one, read its comments and the card designated by its canonical line
+   `carte: <board>/<task_id>`;
+3. a comment whose **first element** is `/ok` becomes a decision
+   (`pj_decision.decision_from_comment`);
+4. `unblock` → `kanban comment` + `kanban unblock` on the card, then
+   `pj_notify.notify_decision` (child notified **then** closed, parent notified,
+   **never** closed);
+5. `comment` (the card was no longer blocked) → the decision is **traced on the
+   card**, without notifying an unblock that did not happen;
+6. `ignore` → nothing (a token quoted mid-sentence, an already-consumed comment,
+   a token older than a re-block).
+
+The tick also **produces** what it consumes: `ensure_decision_child()` gives every
+blocked card its decision issue — the `decision` label is created when missing
+(otherwise `gh issue create --label` fails and the remedy offered to the human is
+inapplicable), the child is attached to its ticket through `--parent`, and its body
+carries the canonical line. A re-block **reopens the same child**, never a duplicate.
+
+| variable | status | default |
+|---|---|---|
+| `PJ_WATCH_ORG` | **required** | — (GitHub organisation) |
+| `PJ_WATCH_REPOS` | **required** | — (repos, comma-separated) |
+| `PJ_WATCH_BOARD` | optional | — (fallback board) |
+| `PJ_WATCH_STATE_DIR` | optional | `$HOME/.hermes/state` |
+| `PJ_WATCH_MODULES_DIR` | optional | directory holding `pj_decision.py` / `pj_notify.py` |
+| `PJ_WATCH_GH_BIN` | optional | `shutil.which` resolution + checked candidates |
+| `PJ_WATCH_HERMES_BIN` | optional | `shutil.which` resolution + checked candidates |
+
+As with `pj_escalate`, a required variable that is absent **or empty** refuses the
+tick loudly (`ConfigError`, exit code `2`, no state written): an empty value is
+never an identifier, and a phantom tick would be worse than a refused one.
+
+**Idempotence is keyed on the CHILD's state**, read from GitHub — a single source
+of truth shared by every tick: no child → `created`; child **OPEN** → `waiting`
+(it already awaits an answer, so nothing is posted); child **CLOSED** →
+`reopened`. The cron keeps no local memory.
+
+**Answering an escalation** — the human comments the **child issue** from GitHub:
+
+```
+/ok
+```
+
+The token must be the comment's **first element**. `/unblock` and `/drop` are
+**refused** grammars (two grammars guarantee divergence). Any other comment is a
+clarification request and unblocks nothing.
+
+**Usage**:
+
+```
+pj_decision_watch.py [--dry-run] [--verbose] [--repo <repo>]
+```
+
+`--dry-run` writes nothing (neither kanban nor GitHub); `--verbose` shows every
+comment and the computed effect.
+
 - **GitHub = coarse grain**: `finalize` edits the issue (number deduced
   from the card body, same convention as the `gh_kanban_bridge.py` bridge).
 - **Hermes = detail**: every step and its output are in the state
