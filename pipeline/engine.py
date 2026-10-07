@@ -214,6 +214,41 @@ TITLE_ICONS = {
 # d'équivalent arbitré : ils n'écrivent pas de titre partiel (best-effort).
 _OUTCOME_STATE = {"running": "in_progress", "done": "done"}
 
+# --- bloc Description épinglé (#19, slice 5) --------------------------------
+# Arbitrage 2b : message DEDIE épinglé, jamais le champ `topic`.
+# Le marqueur est la première ligne du bloc : dédup / mise à jour par
+# identifiant de message (jamais un second message Description).
+DESCRIPTION_MARKER = "[description]"
+
+
+def build_description_lines(issue_url, branch, pr_url, log=print) -> list[str]:
+    """Compose le bloc Description épinglé (composition PURE, slice 5).
+
+    Retourne la liste des lignes :
+      [DESCRIPTION_MARKER, "**Issue** : …", "**Branche** : …", "**PR** : …"]
+    Les lignes sont omises si la valeur est None ou chaîne vide — jamais de
+    placeholder inventé. L'Issue est l'ancre : elle est la seule ligne jamais
+    présente. `log` reçoit chaque message de journalisation d'une source absente
+    (bruyant, jamais muet) et doit accepter un seul argument str.
+    """
+    lines: list[str] = [DESCRIPTION_MARKER]
+    # Ligne Issue (ancre — toujours présente, mais omise si issue_url est vide)
+    if issue_url:
+        lines.append(f"**Issue** : {issue_url}")
+    else:
+        log("issue: non resolue — issue_url absent")
+    # Ligne Branche
+    if branch:
+        lines.append(f"**Branche** : `{branch}`")
+    else:
+        log("branche: non resolue — specs/<n>/slices.json absent ou cle 'branch' absente")
+    # Ligne PR
+    if pr_url:
+        lines.append(f"**PR** : {pr_url}")
+    else:
+        log("PR: non resolue — aucune PR ouverte pour cette branche")
+    return lines
+
 
 def title_icon(state: str) -> str:
     """Icône du titre Discord pour un état arbitré (bijection) ; refuse le reste."""
