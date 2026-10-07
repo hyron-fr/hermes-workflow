@@ -276,6 +276,18 @@ def _engine():
     return _ENGINE_MOD
 
 
+def _marker() -> str:
+    """Marqueur de déduplication du bloc Description (slice 5) — chargé du moteur.
+
+    Délègue à `engine.DESCRIPTION_MARKER` ; lève si le moteur est indisponible
+    (jamais de marqueur inventé : sans moteur, aucun bloc Description n'est écrit).
+    """
+    eng = _engine()
+    if eng is None:
+        raise RuntimeError("moteur indisponible — marqueur Description introuvable")
+    return eng.DESCRIPTION_MARKER
+
+
 def _compose_name(project, ticket, title, state):
     """Nom arbitré du fil (formateur de la slice 3), ou None s'il est inatteignable."""
     eng = _engine()
@@ -547,6 +559,408 @@ def _sync_board_titles(cards, dry=False):
                     f"{' (refus)' if v.get('ok') is False else ''}")
     except Exception as e:
         log(f"ERREUR titre: {e}")
+
+
+# --- bloc Description épinglé (#19, slice 5) --------------------------------
+# Le keeper est l'écrivain UNIQUE du bloc Description (arbitrage 2b) :
+#   - jamais le champ `topic` (Discord le rejette en silence) ;
+#   - jamais un second message Description (idempotence par marqueur) ;
+#   - best-effort : un échec de lecture de source ne tue pas le tick.
+# Les sources (issue_url, branch, pr_url) sont INJECTÉES par le test ; en
+# production elles viennent de `gh issue view`, `slices.json`, `gh pr list`.
+
+def build_description_for_card(card, *, issue_url=None, branch=None,
+                                pr_url=None, log=None,
+                                specs_reader=None, pr_reader=None,
+                                issue_url_lookup=None):
+    """Assemble les sources d'une carte puis compose le bloc Description.
+
+    Retourne {"lines": [...], "log": [...]} ou None si aucune source ne se
+    résout (jamais de bloc vide, jamais de placeholder).
+    """
+    log_list: list[str] = []
+    # `log_list.append` est lié AVANT la boucle d'émission : la rappeler pendant
+    # l'itération (`logger = log or log_list.append` puis `for entry in log_list:
+    # logger(entry)`) rallonge la liste qu'on parcourt — boucle infinie qui mange
+    # toute la RAM du cgroup (mesuré : OOM-kill à 4 GiB après 45 s). Toute la
+    # journalisation passe donc par un helper qui itère sur un INSTANTANÉ.
+    logger = log
+
+    def _emit(entries):
+        """Émet `entries` sans journaliser l'émission elle-même.
+
+        Le collecteur par défaut est `log_list` : y écrire depuis la boucle
+        d'émission est le défaut corrigé ici.
+        """
+        for entry in entries:
+            if logger is not None:
+                logger(entry)
+
+    # Résolution de l'URL de l'issue (ancre).
+    if issue_url is None:
+        issue_url = _issue_url_from_card(card, issue_url_lookup, log_list)
+    # Résolution de la branche.
+    if branch is None:
+        branch = _resolve_branch(card, specs_reader, log_list)
+    # Résolution de l'URL de la PR.
+    if pr_url is None:
+        pr_url = _resolve_pr_url(branch, pr_reader, log_list)
+
+    # Si aucune source ne se résout : aucun bloc (jamais de placeholder).
+    if not issue_url and not branch and not pr_url:
+        _emit(list(log_list))          # instantané : rien ne peut s'y ajouter
+        return None
+
+    lines = []
+    lines.append(_marker())
+    if issue_url:
+        lines.append(f"**Issue** : {issue_url}")
+    if branch:
+        lines.append(f"**Branche** : `{branch}`")
+    if pr_url:
+        lines.append(f"**PR** : {pr_url}")
+
+    # Journalisation bruyante des sources absentes.
+    if not issue_url:
+        log_list.append("issue: non resolue — issue_url absent")
+    if not branch:
+        log_list.append("branche: non resolue — specs/<n>/slices.json absent ou cle 'branch' absente")
+    if not pr_url:
+        log_list.append("PR: non resolue — aucune PR ouverte pour cette branche")
+
+    _emit(list(log_list))
+
+    return {"lines": lines, "log": list(log_list)}
+
+
+def _issue_url_from_card(card, issue_url_lookup, log_list: list[str]):
+    """Déduit l'URL d'issue du body de la carte ou via issue_url_lookup."""
+    # Ancre « Importé depuis …/issues/N »
+    body = str((card or {}).get("body") or "")
+    m = re.search(r"github\.com/[^/\s]+/[^/\s]+/issues/(\d+)", body)
+    if m:
+        return f"https://github.com/{_gh_repo()}/issues/{m.group(1)}"
+    # Repli : champ issue_number + lookup
+    n = _issue_number_of(card)
+    if n is not None and issue_url_lookup:
+        try:
+            url = issue_url_lookup(n)
+            if url:
+                return url
+            log_list.append(f"issue: lookup a renvoyé None pour n={n}")
+        except Exception as e:
+            log_list.append(f"issue: lookup a levé {e.__class__.__name__}: {e}")
+    return None
+
+
+def _gh_repo() -> str:
+    return (os.environ.get("GH_REPO") or "").rsplit("/", 1)[-1] or "hermes-workflow"
+
+
+def _resolve_branch(card, specs_reader, log_list: list[str]):
+    """Lecteur de specs/<n>/slices.json (clé 'branch') — injecté."""
+    n = _issue_number_of(card)
+    if n is None:
+        log_list.append("branche: non resolue — numero d'issue introuvable dans la carte")
+        return None
+    if specs_reader is None:
+        log_list.append("branche: non resolue — specs_reader absent")
+        return None
+    try:
+        data = specs_reader(n)
+    except Exception as e:
+        log_list.append(f"branche: erreur specs_reader {e.__class__.__name__}: {e}")
+        return None
+    if isinstance(data, dict):
+        return data.get("branch") or None
+    return None
+
+
+def _resolve_pr_url(branch, pr_reader, log_list: list[str]):
+    """Lecteur de `gh pr list --head <branche> --json url` — injecté."""
+    if not branch:
+        log_list.append("PR: non resolue — aucune branche pour chercher la PR")
+        return None
+    if pr_reader is None:
+        log_list.append("PR: non resolue — pr_reader absent")
+        return None
+    try:
+        result = pr_reader(branch)
+    except Exception as e:
+        log_list.append(f"PR: erreur pr_reader (gh) {e.__class__.__name__}: {e}")
+        return None
+    return result or None
+
+
+def sync_description(cards, *, fetch_messages, write_message, log=None):
+    """Écrivain du bloc Description (best-effort, NE LÈVE JAMAIS).
+
+    Pour chaque carte :
+      1. résout le fil Discord via `thread_lookup` (injectable) ;
+      2. compose le bloc via `build_description_for_card` ;
+      3. si le fil porte déjà le marqueur `[description]` → ÉDITE le message ;
+      4. sinon → POSTE un nouveau message et l'ÉPINGLE ;
+      5. retourne un verdict par carte :
+         {"card_id", "thread_id", "action": "post"|"edit", "ok": bool, "pinned": bool}
+    Une carte sans fil résolu est omise (verdict thread_id=None, ok=None).
+    """
+    log = log or print
+    verdicts = []
+    for card in cards:
+        card_id = card.get("id", "?")
+        issue_n = _issue_number_of(card)
+        thread_id = None
+        if issue_n is not None:
+            try:
+                thread_id = thread_lookup(issue_n)
+            except Exception:
+                thread_id = None
+        if not thread_id:
+            verdicts.append({"card_id": card_id, "thread_id": None,
+                             "action": None, "ok": None, "pinned": None})
+            continue
+
+        # Compose le bloc (best-effort).
+        try:
+            built = build_description_for_card(card, log=log)
+        except Exception as e:
+            log(f"description: erreur build_description_for_card {card_id}: {e}")
+            verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                             "action": None, "ok": False, "pinned": False})
+            continue
+        if built is None:
+            verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                             "action": None, "ok": None, "pinned": None})
+            continue
+        content = "\n".join(built["lines"])
+
+        # Lit les messages du fil pour trouver le marqueur.
+        try:
+            msgs = fetch_messages(thread_id) or []
+        except Exception as e:
+            log(f"description: erreur fetch_messages {card_id}: {e}")
+            verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                             "action": "post", "ok": False, "pinned": False})
+            continue
+        existing = next(
+            (m for m in msgs if _marker() in (m.get("content") or "")),
+            None,
+        )
+        action = "edit" if existing else "post"
+        edit_id = existing["id"] if existing else None
+        pinned = False
+        try:
+            res = write_message(thread_id, content, edit_id=edit_id)
+        except Exception as e:
+            log(f"description: erreur write_message {card_id}: {e}")
+            res = {"ok": False, "id": None}
+        ok = res.get("ok") is True
+        # Épingler (best-effort, le helper discord_thread.py gère la pin).
+        if ok:
+            try:
+                msg_id = res.get("id") or (existing and existing["id"])
+                if msg_id:
+                    _discord_pin(thread_id, msg_id)
+                    pinned = True
+            except Exception as e:
+                log(f"description: pin échoué {card_id}: {e}")
+                pinned = False
+        verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                         "action": action, "ok": ok, "pinned": pinned})
+    return verdicts
+
+
+def _discord_pin(thread_id, message_id):
+    """Épingle un message dans un thread via le helper Discord (best-effort)."""
+    r = subprocess.run(
+        [sys.executable, str(DISCORD_HELPER), "pin",
+         str(thread_id), str(message_id)],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"pin {message_id}: {r.stderr.strip()[:200]}")
+    return r.stdout.strip()
+
+
+def thread_lookup(issue_number):
+    """Résolveur de fil Discord pour un numéro d'issue (injectable en test).
+
+    En production, délègue à `engine.resolve_thread` si disponible.
+    """
+    eng = _engine()
+    if eng is not None and hasattr(eng, "resolve_thread"):
+        try:
+            return eng.resolve_thread(int(issue_number))
+        except Exception:
+            return None
+    return None
+
+
+def sync_all_descriptions(cards, *, fetch_messages, write_message, log=None,
+                          specs_reader=None, pr_reader=None,
+                          issue_url_lookup=None):
+    """Câble `build_description_for_card` + `sync_description` — best-effort.
+
+    NE LÈVE JAMAIS : un lecteur de source qui lève est capturé et tracé ;
+    le tick suivant continue. Retour : liste de verdicts (une par carte).
+    """
+    log = log or print
+    verdicts = []
+    for card in cards:
+        card_id = card.get("id", "?")
+        thread_id = None
+        try:
+            issue_n = _issue_number_of(card)
+            if issue_n is not None:
+                thread_id = thread_lookup(issue_n)
+        except Exception as e:
+            log(f"desc-all: erreur resolution fil {card_id}: {e}")
+        if not thread_id:
+            verdicts.append({"card_id": card_id, "thread_id": None,
+                             "action": None, "ok": None, "pinned": None})
+            continue
+        # Build le bloc pour cette carte.
+        try:
+            built = build_description_for_card(
+                card,
+                specs_reader=specs_reader,
+                pr_reader=pr_reader,
+                issue_url_lookup=issue_url_lookup,
+                log=log,
+            )
+        except Exception as e:
+            log(f"desc-all: erreur build {card_id}: {e}")
+            verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                             "action": None, "ok": False, "pinned": False})
+            continue
+        if built is None:
+            verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                             "action": None, "ok": None, "pinned": None})
+            continue
+        content = "\n".join(built["lines"])
+        # Détection du marqueur pour post vs edit.
+        try:
+            msgs = fetch_messages(thread_id) or []
+        except Exception as e:
+            log(f"desc-all: erreur fetch {card_id}: {e}")
+            verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                             "action": "post", "ok": False, "pinned": False})
+            continue
+        existing = next(
+            (m for m in msgs if _marker() in (m.get("content") or "")),
+            None,
+        )
+        action = "edit" if existing else "post"
+        edit_id = existing["id"] if existing else None
+        pinned = False
+        try:
+            res = write_message(thread_id, content, edit_id=edit_id)
+        except Exception as e:
+            log(f"desc-all: erreur write {card_id}: {e}")
+            res = {"ok": False, "id": None}
+        ok = res.get("ok") is True
+        if ok:
+            try:
+                msg_id = res.get("id") or (existing and existing["id"])
+                if msg_id:
+                    _discord_pin(thread_id, msg_id)
+                    pinned = True
+            except Exception as e:
+                log(f"desc-all: pin échoué {card_id}: {e}")
+        verdicts.append({"card_id": card_id, "thread_id": thread_id,
+                         "action": action, "ok": ok, "pinned": pinned})
+    return verdicts
+
+
+def _sync_board_descriptions(cards, dry=False):
+    """Ajouté en fin de cycle keeper : écrit/actualise le bloc Description.
+
+    Best-effort : ne conditionne aucune transition. Les sources réelles sont
+    les adaptateurs de production (gh, slices.json). Un échec est loggé.
+    """
+    import time
+    now = time.time()
+    # Adaptateurs réels (best-effort).
+    def _fetch_messages(tid):
+        r = subprocess.run(
+            [sys.executable, str(DISCORD_HELPER), "messages", str(tid)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip()[:200])
+        import json as _json
+        data = _json.loads(r.stdout)
+        return data if isinstance(data, list) else []
+
+    def _write_message(tid, content, *, edit_id=None):
+        cmd = [sys.executable, str(DISCORD_HELPER), "upsert-desc", str(tid)]
+        if edit_id:
+            cmd += ["--edit-id", str(edit_id)]
+        cmd.append(content)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return {"ok": False, "id": None}
+        return {"ok": True, "id": r.stdout.strip() or None}
+
+    try:
+        verdicts = sync_all_descriptions(
+            cards,
+            fetch_messages=_fetch_messages,
+            write_message=_write_message,
+            specs_reader=_prod_specs_reader,
+            pr_reader=_prod_pr_reader,
+            issue_url_lookup=_prod_issue_url_lookup,
+            log=print,
+        )
+        for v in verdicts:
+            if v.get("action") not in (None, "skip"):
+                log(f"desc {v.get('card_id')} [{v.get('action')}] "
+                    f"ok={v.get('ok')} pinned={v.get('pinned')}")
+    except Exception as e:
+        log(f"ERREUR desc: {e}")
+
+
+def _prod_specs_reader(issue_number):
+    """Lecteur de specs/<n>/slices.json (production, best-effort)."""
+    import json as _json
+    p = WORKFLOW_ROOT / "specs" / str(issue_number) / "slices.json"
+    if not p.is_file():
+        raise FileNotFoundError(f"specs/{issue_number}/slices.json introuvable")
+    return _json.loads(p.read_text())
+
+
+def _prod_pr_reader(branch):
+    """`gh pr list --head <branche> --json url` (production, best-effort)."""
+    import json as _json
+    repo = os.environ.get("GH_REPO", "")
+    if not repo:
+        return None
+    r = subprocess.run(
+        [GH_BIN if (GH_BIN := os.environ.get("GH_BIN", "/usr/bin/gh")) else "/usr/bin/gh",
+         "pr", "list", "--repo", repo, "--head", branch, "--json", "url"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"gh pr list: {r.stderr.strip()[:200]}")
+    data = _json.loads(r.stdout or "[]")
+    return data[0]["url"] if data else None
+
+
+def _prod_issue_url_lookup(issue_number):
+    """`gh issue view N --json url` (production, best-effort)."""
+    import json as _json
+    repo = os.environ.get("GH_REPO", "")
+    if not repo:
+        return None
+    r = subprocess.run(
+        ["/usr/bin/gh", "issue", "view", str(issue_number),
+         "--repo", repo, "--json", "url"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        return None
+    data = _json.loads(r.stdout or "{}")
+    return data.get("url")
 
 
 def main() -> int:
