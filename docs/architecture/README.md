@@ -22,6 +22,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-42]] — « t3 grill-me » : 4ᵉ escalade conv-5 (chantier #19, slice 5/5) ; GREEN dev-5 `6661362` perdu, banc RED 10/10 ; `/ok` débloque la re-génération.
 
 ## Décisions (ADR)
 
