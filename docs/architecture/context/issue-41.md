@@ -67,8 +67,8 @@ au service de la capacité **notification Discord du chantier #19** — moitié
   `pipeline/engine.py`, keeper comme écrivain unique du titre avec coalescence
   par fenêtre `TITLE_WINDOW = 600 s`.
 - **Moitié description (slice 5, le GREEN est perdu)** : ce que cette issue
-  débloque. Le diff non commité dans le worktree partagé (mesuré 2026-10-08)
-  contient déjà le code du GREEN partiel.
+  débloque. Le GREEN partial vit dans le commit `55e6659` (baseline conv-audit,
+  worktree partagé `t_c22a7e74`) ; banc mesuré 7/10, 3 retouches restantes.
 
 ### Code (composants impactés par le travail débloqué)
 
