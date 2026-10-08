@@ -22,6 +22,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-44]] — t3 grill-me (miroir de la carte t_8f81e69a, board pj-hermes-workflow) : escalade de décision sur le GREEN dev-5 6661362 perdu (chaîne #28 → #32 → #44) ; le fix 8e35b6e (jeton /ok reconnu en tête ou après UNE amorce, TOKEN_PREFIX_MAX = 1) rend le verdict tranchable en production.
 
 ## Décisions (ADR)
 
