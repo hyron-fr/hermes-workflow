@@ -27,13 +27,18 @@ de #19 (moitié « Description épinglée » du thread Discord). Les 3 options �
 pj-dev, (c) autre.
 
 **Écart mesuré sur le travail déjà effectué sur la branche ciblée** :
-`pipeline/pj_room_keeper.py` contient un diff **non commité** (35 insertions,
-70 suppressions) dans le worktree partagé `t_c22a7e74` qui implémente le fix du
-GREEN : (1) `_issue_url_from_card` lit l'URL complète depuis l'ancre du body
-au lieu de la reconstituer via `_gh_repo()` (fix de la perte d'org), (2)
-`sync_description` accepte `issue_url_lookup` / `specs_reader` / `pr_reader`
-et les transmet à `build_description_for_card`, (3) `sync_all_descriptions`
-délègue à `sync_description` au lieu de dupliquer le cycle.
+Le GREEN partial vit dans le commit `55e6659` (baseline conv-audit, worktree
+partagé `t_c22a7e74`). Mesuré 2026-10-08 par le banc `uv run --with pytest` :
+**7/10 GREEN, 3 RED**. Les 3 cas restants exigent 3 retouches dans
+`pipeline/pj_room_keeper.py` (le banc reste intouchable, contrat-5) :
+
+| # | Cas RED | Retouche |
+|---|---|---|
+| 1 | `test_nominal_un_seul_message_epingle_mis_a_jour_pas_duplique` — `thread_id=None` car le code appelle `thread_lookup()` module-level → `engine.resolve_thread` → réseau (empoisonné par le banc) | `sync_description` / `sync_all_descriptions` doivent **déduire le thread_id du body de la carte** (ancre `Importé depuis …/issues/N` → `TH-N` déterministe, 0 réseau) ; le `thread_lookup` module-level n'est appelé **que si** le fil n'est pas déductible du body |
+| 2 | `test_erreur_gh_pr_list_en_erreur_ligne_omise_tracee_pas_exception` — org perdu : `_issue_url_from_card` reconstruit l'URL via `_gh_repo()` (dernier segment du slug) au lieu de lire l'org complet depuis l'ancre du body | `_issue_url_from_card` extrait l'org depuis le pattern `github.com/<org>/<repo>/issues/N` présent dans le body ; le fallback `_gh_repo()` n'est utilisé que si l'ancre est absente |
+| 3 | `test_erreur_le_reader_de_source_qui_leve_ne_tue_pas_le_tick` — verdict manquant : quand un lecteur (ex. `specs_reader`) lève, le `continue` saute l'écriture du verdict alors que le banc attend 1 écriture (bloc omis mais tracé) | `sync_all_descriptions` écrit le verdict (avec le bloc omis et le log de l'exception) même quand un lecteur lève, avant le `continue` |
+
+Aucune des 3 retouches ne touche `tests/` ni `pipeline/engine.py`.
 
 ## Croisement infrastructure / fonctionnel / code
 
@@ -73,10 +78,14 @@ et le diff du worktree partagé `t_c22a7e74`) :
 - **`pipeline/engine.py`** — `DESCRIPTION_MARKER` + `build_description_lines`
   (composition **pure** du bloc : 4 lignes max, omission des sources absentes,
   log bruyant). Le formateur pur du titre (slices 1–3) y vit déjà.
-- **`pipeline/pj_room_keeper.py`** — porteur de l'écriture (diff non commité
-  mesuré : 35+/70−) : `build_description_for_card` + `sync_description`
-  (déduplication par marqueur `[description]`, édition jamais second post,
-  accueil du fil intact) + `sync_all_descriptions` (délégation à
+- **`pipeline/pj_room_keeper.py`** — porteur de l'écriture (GREEN partial dans le
+  commit `55e6659`, banc 7/10) : 3 retouches à appliquer (mesurées 2026-10-08 par
+  le banc) : (1) déduction du `thread_id` depuis l'ancre du body (pas `thread_lookup`
+  module-level), (2) lecture de l'org depuis l'ancre du body dans `_issue_url_from_card`
+  (pas reconstitution via `_gh_repo()`), (3) écriture du verdict même quand un
+  lecteur lève dans `sync_all_descriptions`. `build_description_for_card` +
+  `sync_description` (déduplication par marqueur `[description]`, édition jamais
+  second post, accueil du fil intact) + `sync_all_descriptions` (délégation à
   `sync_description` avec lecteurs injectés, ne lève jamais). Le keeper est
   déjà l'écrivain unique du titre (slice 4) : la description s'y implante
   **à côté** du cycle de renommage, sans conditionner les transitions.
