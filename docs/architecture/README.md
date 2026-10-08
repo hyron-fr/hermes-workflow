@@ -21,6 +21,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
 - [[issue-31]] — point de décision : le commit GREEN de la slice 5 de #19 (bloc Description épinglé) est absent du worktree partagé — intégrité de l'histoire de branche, verdict de convergence bloqué.
+- [[issue-45]] — 4ᵉ escalade conv-5 : RECYCLE du GREEN perdu (slice 5/5 #19), ticket de décision sur la carte `t_7aaf3d49` ; périmètre gelé (banc 10/10 RED, helper sans `upsert-desc`/`pin`), re-poussage du GREEN en attente du `/ok`.
 
 ## Décisions (ADR)
 
