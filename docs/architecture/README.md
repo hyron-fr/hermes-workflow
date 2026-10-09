@@ -22,6 +22,8 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-41]] — « t3 grill-me » : 4ᵉ escalade conv-5 (carte `t_3f7e0be4`), GREEN original `6661362` définitivement absent, GREEN partial présent (banc 8/10, 2 fixes keeper + `upsert-desc`/`pin` restants) ; verdict grill-me `PROTOTYPE: non`, `/ok` débloque la carte.
+- [[issue-40]] — « t3 grill-me » : 5ᵉ escalade conv-5 (carte `t_e59e64e5`), point à statuer — trancher (A) `/ok` sur #31 vs (B) re-pousser le GREEN d'abord ; GREEN partial présent (banc à rejouer), `upsert-desc`/`pin` absents du helper.
 
 ## Décisions (ADR)
 
