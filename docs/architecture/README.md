@@ -22,6 +22,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-37]] — « t2 mémoire projet » : miroir de décision de #27/#29 (même carte conv-5 `t_f725879f` du chantier #19, GREEN dev-5 perdu) ; cadrage de convergence/mémoire projet après crash du worker run #294 ; `/ok` débloque la carte `t_87ba23bf`.
 
 ## Décisions (ADR)
 
