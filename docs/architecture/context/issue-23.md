@@ -23,24 +23,32 @@ worktree partagé, et prononce un verdict (GREEN/RED, complet/partiel,
 `request-changes` éventuel). Ici, le verdict est **impossible à prononcer** —
 pas par défaut de convergence du code, mais par **absence du code à juger**.
 
-Le point à statuer, **mesuré** sur le worktree partagé de l'issue #19
-(branche `wt/issue-19-discord-thread-title-description`) :
+**État mesuré** (2026-10-10, 18:05 CEST) sur la branche
+`origin/wt/issue-19-discord-thread-title-description` (tip `6a2d8e3`) :
 
-- le commit **GREEN** que `dev-5` revendique (`6661362`) est **absent de toutes les
+- Le commit **GREEN** que `dev-5` revendique (`6661362`) est **absent de toutes les
   refs** du dépôt (mesuré : `git cat-file -t 6661362` → `fatal: Not a valid object
-  name` ; `git log --all` → aucune occurrence) ;
-- le head de la branche est `49bb284` (**RED** — le banc de test de la slice 5,
-  0 occurrence de l'API slice 5 dans `pipeline/`, `bridge/` ou `skills/`) ;
-- le banc **10/10 RED** est rejoué et échoue (état « rien n'est livré ») ;
-- la carte `t_f725879f` est **bloquée** : « Impossible de juger la convergence
-  sans le code ».
+  name`) ;
+- Le **GREEN partiel** `55e6659` est présent : `pipeline/engine.py` porte la section
+  « bloc Description épinglé » (35 lignes, `DESCRIPTION_MARKER`,
+  `build_description_lines`) ; `dccf75f` (fix OOM du keeper) est son ancêtre ;
+- Le keeper `pipeline/pj_room_keeper.py` **ne porte PAS** `build_description_for_card`
+  ni `sync_description` ni `sync_all_descriptions` sur le tip de la branche :
+  l'écriture et l'épingle du bloc Description ne sont pas livrées ;
+- Le helper `skills/gh-kanban-bridge/scripts/discord_thread.py` n'a **pas** les
+  commandes `upsert-desc` et `pin` (seuls `create/send/threads/rename/delete`) ;
+- Le banc `tests/test_thread_description.py` (10 cas, 3 nominal / 3 limite / 4
+  erreur, pur) existe sur la branche, mais l'environnement de test local est cassé
+  (`ModuleNotFoundError: pydantic_core._pydantic_core`) — l'état des 10 tests ne
+  peut pas être rejoué sur cette machine. Les notes de cadrage antérieures (#33,
+  #41, #45) mesuraient 7/10 GREEN, 3 rouges nommés.
 
-**Ce que l'évolution devrait implémenter** (si le GREEN était présent) : le **bloc
-Description épinglé** du thread Discord de l'issue #19 — un message dédié, unique,
-mis à jour (jamais dupliqué), dont les trois lignes (issue / branche / PR) se
-résolvent depuis des sources injectées et se **taisent proprement** quand la valeur
-n'existe pas encore. C'est la **seconde moitié** de la spec #19 (la première —
-titre — est livrée par les slices 2/3/4).
+**Ce que l'évolution devrait implémenter** (si le GREEN complet était présent) : le
+**bloc Description épinglé** du thread Discord de l'issue #19 — un message dédié,
+unique, mis à jour (jamais dupliqué), dont les trois lignes (issue / branche / PR)
+se résolvent depuis des sources injectées et se **taisent proprement** quand la
+valeur n'existe pas encore. C'est la **seconde moitié** de la spec #19 (la première
+— titre — est livrée par les slices 2/3/4).
 
 ## Croisement infrastructure / fonctionnel / code
 
@@ -156,8 +164,11 @@ worktree (lecture seule), il **n'écrit** aucun code.
 - `~/.hermes/scripts/pj_escalate.py` — création de l'enfant + point à statuer +
   consommation du `/ok` (adapter, **exercé**, non versionné ; câblage hors PR,
   issue #4).
-- `pipeline/pj_room_keeper.py` — **objet à juger** (le code GREEN **devrait** y
-  porter l'API slice 5 ; **mesuré : absent**).
+- `pipeline/engine.py` — **partiellement livré** (commit `55e6659`, GREEN partiel) :
+  porte `DESCRIPTION_MARKER` et `build_description_lines` (composition pure du bloc).
+- `pipeline/pj_room_keeper.py` — **objet à juger** : le GREEN complet **devrait** y
+  porter `build_description_for_card`, `sync_description`, `sync_all_descriptions`
+  ; **mesuré : absent sur le tip de la branche**.
 - `skills/gh-kanban-bridge/scripts/discord_thread.py` — **exercé** (l'adapter
   **devrait** porter `upsert-desc`/`pin` ; **mesuré : absentes**).
 - `tests/test_thread_description.py` — **présent** (banc RED, 10 cas, pur).
