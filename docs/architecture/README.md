@@ -19,6 +19,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
 - [[issue-27]] — « slice 5/5 — convergence » : issue de décision (escalade de la carte conv-5 `t_f725879f` du chantier #19), GREEN dev-5 perdu, banc 10/10 RED ; `/ok` débloque, le re-poussage du GREEN suit.
 - [[issue-29]] — « slice 5/5 — convergence » : miroir de décision de #27 (même carte conv-5 `t_f725879f` du chantier #19, GREEN dev-5 perdu) ; cadrage de convergence/preuve de livraison par couverture commit-à-commit.
+- [[issue-25]] — « slice 5/5 — convergence » : 6ᵉ import du point à statuer conv-5 (carte `t_f725879f`, chantier #19) ; GREEN partiel présent dans le worktree partagé (keeper livré, helper Discord sans `edit`/`pin`), commit original `6661362` introuvable, banc partiel ; `/ok` débloque, la livraison `edit`/`pin` + GREEN complet suit.
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
