@@ -105,8 +105,7 @@ gelé par le banc, la voie de re-livraison est l'arbitrage humain.
 La capacité traversée est **convergence + preuve de livraison** (pas une
 fonctionnalité nouvelle). Le chantier #19 (« Discord thread title and
 description update ») est déjà cadré par la note [[issue-27]] (escalade 1ᵉʳ),
-[[issue-29]] (escalade 2ᵉ), [[issue-41]] (escalade 4ᵉ), [[issue-81]]
-(escalade 5ᵉ) et la note composant `pj-thread-name` (slices 2–4 livrées).
+[[issue-29]] (escalade 2ᵉ) et la note composant `pj-thread-name` (slices 2–4 livrées).
 #74 porte :
 
 - **le point de décision** : la voie de re-pousée du GREEN slice-5 — verdict
