@@ -17,6 +17,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-5]] — Interface de décision humaine pour les cartes bloquées (Discord + GitHub uniquement).
 - [[issue-4]] — Versionner pj_escalate.py (pipeline/) : garde-fou d'état d'issue + résolution de binaire hors PATH.
 - [[issue-7]] — bridge/mermaid.min.js ne parse pas (littéral numérique substitué par un placeholder de sanitisation).
+- [[issue-24]] — « slice 5/5 — convergence » : 7ᵉ import du point à statuer conv-5 (carte `t_f725879f`, chantier #19, slice 5 `description-epinglee`) ; état mesuré 2026-10-10 : banc 7/10, correctif OOM + 3 retouches keeper en diff uncommitted, `upsert-desc`/`pin` du helper absentes, re-poussage GREEN tranché via #45 (dev-5 RECYCLE `t_854f0f77`).
 - [[issue-27]] — « slice 5/5 — convergence » : issue de décision (escalade de la carte conv-5 `t_f725879f` du chantier #19), GREEN dev-5 perdu, banc 10/10 RED ; `/ok` débloque, le re-poussage du GREEN suit.
 - [[issue-29]] — « slice 5/5 — convergence » : miroir de décision de #27 (même carte conv-5 `t_f725879f` du chantier #19, GREEN dev-5 perdu) ; cadrage de convergence/preuve de livraison par couverture commit-à-commit.
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
