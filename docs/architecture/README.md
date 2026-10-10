@@ -25,6 +25,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-45]] — 4ᵉ escalade conv-5 : RECYCLE du GREEN perdu (slice 5/5 #19), ticket de décision sur la carte `t_7aaf3d49` ; périmètre gelé (banc 10/10 RED, helper sans `upsert-desc`/`pin`), re-poussage du GREEN en attente du `/ok`.
 - [[issue-41]] — 4ᵉ escalade conv-5 (échelon #27) : point à statuer sur le GREEN slice-5 perdu ; périmètre gelé par le banc `test_thread_description.py`, diff GREEN partiel déjà présent (non commité) dans le worktree partagé `t_c22a7e74` ; décision a/b/c en attente de l'humain.
 - [[issue-80]] — 6ᵉ escalade conv-5 (carte `t_cd75a2e4`, parent #42) : re-import de #42 ; GREEN original `6661362` définitivement absent, GREEN partial présent (banc 7/10, 3 fixes keeper + `upsert-desc`/`pin` restants, fix non-commité dans l'arbre) ; verdict grill-me `PROTOTYPE: non`, `/ok` débloque la carte.
+- [[issue-75]] — 7ᵉ escalade conv-5 (carte `t_566c200d`, parent #28) : GREEN original `6661362` définitivement absent, GREEN partial commité dans l'arbre (banc 7/10, 3 retouches keeper + `upsert-desc`/`pin` restants) ; verdict grill-me `PROTOTYPE: non / AMBIGU: cause de la perte + choix de la voie de re-livraison / ARTEFACT: aucun`, `/ok` débloque la carte.
 
 ## Décisions (ADR)
 
