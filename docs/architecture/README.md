@@ -21,6 +21,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-29]] — « slice 5/5 — convergence » : miroir de décision de #27 (même carte conv-5 `t_f725879f` du chantier #19, GREEN dev-5 perdu) ; cadrage de convergence/preuve de livraison par couverture commit-à-commit.
 - [[issue-41]] — « t3 grill-me » : 4ᵉ escalade conv-5 (carte `t_3f7e0be4`), GREEN original `6661362` définitivement absent, GREEN partial présent (banc 8/10, 2 fixes keeper + `upsert-desc`/`pin` restants) ; verdict grill-me `PROTOTYPE: non`, `/ok` débloque la carte.
 - [[issue-81]] — « t3 grill-me » : 5ᵉ escalade conv-5 (carte `t_c0e5ce5a`, parent #43), GREEN original `6661362` définitivement absent, GREEN partial présent (banc 7/10, 3 fixes keeper + `upsert-desc`/`pin` restants) ; verdict grill-me `PROTOTYPE: non`, `/ok` débloque la carte.
+- [[issue-72]] — « t3 grill-me » : racine importée de l'escalade conv-5 (miroir `t_a444c5ff` de `t_f725879f` issue #29, parent #29) ; arbitrage déjà rendu (option B : re-GREEN par NOUVEAU commit via `/ok` sur #45 RECYCLE, jamais un replay de `6661362`) ; périmètre gelé = 3 retouches keeper (contrat-5) + `upsert-desc`/`pin` helper ; banc 7/10 mesuré 2026-10-11, `/ok` débloque la carte cible sans faire de dev.
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
