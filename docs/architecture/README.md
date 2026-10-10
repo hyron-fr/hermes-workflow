@@ -20,6 +20,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-26]] — « slice 5/5 — convergence » : premier miroir GitHub de l'escalade conv-5 (carte `t_f725879f`, chantier #19, slice 5 `description-epinglee`) ; point à statuer GREEN dev-5 perdu, état mesuré 2026-10-10 : GREEN partial livré (banc 7/10), 3 cas du banc échouent, capacités `pin`/`upsert-desc` du helper Discord absentes.
 - [[issue-31]] — point de décision : le commit GREEN de la slice 5 de #19 (bloc Description épinglé) est absent du worktree partagé — intégrité de l'histoire de branche, verdict de convergence bloqué.
 - [[issue-45]] — 4ᵉ escalade conv-5 : RECYCLE du GREEN perdu (slice 5/5 #19), ticket de décision sur la carte `t_7aaf3d49` ; périmètre gelé (banc 10/10 RED, helper sans `upsert-desc`/`pin`), re-poussage du GREEN en attente du `/ok`.
 - [[issue-41]] — 4ᵉ escalade conv-5 (échelon #27) : point à statuer sur le GREEN slice-5 perdu ; périmètre gelé par le banc `test_thread_description.py`, diff GREEN partiel déjà présent (non commité) dans le worktree partagé `t_c22a7e74` ; décision a/b/c en attente de l'humain.
