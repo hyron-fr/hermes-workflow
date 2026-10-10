@@ -22,6 +22,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-22]] — Ticket de décision « t5 validate » : point à statuer sur `t_4eaf85c8` (gate humain #19) ; mesuré le 2026-10-10 le point est déjà tranché (GO du 2026-10-03, carte done) — re-import stérile, rattachement au chantier #19.
 
 ## Décisions (ADR)
 
