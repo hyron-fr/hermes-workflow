@@ -180,9 +180,12 @@ dans l'arbre n'est pas un travail livré.
   `pipeline/` → **présents** (GREEN partial livré dans l'arbre).
 - `grep upsert-desc|pin` sur `skills/gh-kanban-bridge/scripts/discord_thread.py` →
   **0 hit** (capacité non livrée).
-- Banc `tests/test_thread_description.py` : **7/10 GREEN, 3 RED** (mesuré
-  2026-10-10, rejouable via `uv run --with pytest … -m pytest
-  tests/test_thread_description.py -v -p no:randomly`).
+- Banc `tests/test_thread_description.py` : **7/10 GREEN, 3 RED** rejoué le
+  2026-10-10 dans `t_c22a7e74` :
+  `uv run --with pytest --with pytest-randomly --with pyyaml --with langgraph -m pytest tests/test_thread_description.py -v -p no:randomly`
+  → `3 failed, 7 passed in 0.68s` ; les 3 cas rouges sont exactement ceux nommés
+  ci-dessus. (Environnement : `pyyaml` + `langgraph` requis par
+  `pipeline/engine.py`, non préinstallés dans l'env uv ad hoc.)
 - `pj_docs_lint.py` sur `/home/elix/pj-repos/hermes-workflow` → `exit=0`.
 
 ## Composants impactés (résumé)
