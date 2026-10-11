@@ -22,6 +22,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-63]] — « t3b doc-cadrage » : 3ᵉ import (miroir) du point à statuer conv-5 (GREEN dev-5 `6661362` perdu, banc 7/10, correctif OOM en working tree), caveat de lissage — body pointe vers `t_e706d361` (todo) et non `t_f725879f` (conv-5, blocked).
 
 ## Décisions (ADR)
 
