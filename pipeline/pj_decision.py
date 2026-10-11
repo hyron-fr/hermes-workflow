@@ -8,9 +8,11 @@ banc `tests/test_decision_humaine.py` rejouable hors ligne.
 
 Design ratifié (une issue enfant par carte bloquée) :
 
-- la décision est un commentaire GitHub **commençant par** le jeton `/ok`
-  (casse indifférente). `/unblock` n'est **pas** une grammaire : il est ignoré
-  (deux grammaires = une divergence garantie) ;
+- la décision est un commentaire GitHub **portant le jeton `/ok` en tête**, ou
+  immédiatement après **une** amorce (« rattaché /ok », « d'accord, /ok ») — la
+  position exacte est de la présentation, pas de la décision ; au-delà, le jeton est
+  *cité* et ne décide rien (`_token_index`). Casse indifférente. `/unblock` n'est
+  **pas** une grammaire : il est ignoré (deux grammaires = une divergence garantie) ;
 - la **cible** de la décision est l'enfant, donc la carte que **cet** enfant
   désigne. Elle n'est jamais résolue par le fil ni par un `#N` du ticket parent :
   le lien est porté par `ctx['cards']` (chaque carte porte le numéro d'issue de
@@ -62,8 +64,9 @@ def _ignore(note=""):
 
 
 def _first_token(body):
-    """Premier élément du corps de commentaire (jeton en TÊTE), en minuscules.
+    """Premier élément du corps de commentaire, en minuscules.
 
+    Sert à NOMMER une grammaire refusée (`/unblock`…) dans la note d'ignoré.
     « jeton cité au milieu d'une phrase » n'est pas un acte : `split()` fait foi,
     et l'argument éventuel (`/ok t_bbb`) reste inerte.
     """
@@ -71,6 +74,29 @@ def _first_token(body):
         return ""
     parts = str(body).split()
     return parts[0].lower() if parts else ""
+
+
+# Nombre d'éléments tolérés AVANT le jeton. 1 = « une amorce » : « rattaché /ok »,
+# « d'accord, /ok », « +1 /ok ». La position exacte du jeton est de la présentation
+# du commentaire, pas de la décision : exiger la toute première place a produit un
+# FAUX NÉGATIF mesuré en production (2026-10-06) — un humain a commenté
+# « rattaché /ok » en réponse à une instruction qui disait « commenter ici la
+# décision », la carte est restée bloquée, et la seule trace était un `ignore` de
+# tick, invisible pour lui. Un jeton *cité* reste refusé (cas limite du banc).
+TOKEN_PREFIX_MAX = 1
+
+
+def _token_index(parts):
+    """Index du jeton de décision dans `parts`, ou -1 s'il n'est pas porteur d'acte.
+
+    Tête, ou immédiatement après ≤ `TOKEN_PREFIX_MAX` amorce(s). Au-delà le jeton
+    est *cité* dans une phrase (« est-ce que /ok est le bon jeton ? ») : c'est une
+    question, elle ne décide rien.
+    """
+    for i, part in enumerate(parts[:TOKEN_PREFIX_MAX + 1]):
+        if part.lower() == TOKEN:
+            return i
+    return -1
 
 
 def _as_int(value):
@@ -113,13 +139,15 @@ def decision_from_comment(ctx: dict, comment: dict) -> dict:
     ctx = ctx if isinstance(ctx, dict) else {}
     body = comment.get("body") if isinstance(comment, dict) else None
     token = _first_token(body)
+    parts = str(body).split() if body else []
 
-    # 1. jeton en tête — un jeton cité, un corps vide ou une grammaire refusée
+    # 1. jeton porteur d'acte — tête du corps, ou immédiatement après une amorce.
+    #    Un jeton *cité* en pleine phrase, un corps vide, une grammaire refusée
     #    n'agissent pas.
     if token in REJECTED_TOKENS:
         return _ignore(f"grammaire refusée {token} : seule {TOKEN} décide")
-    if token != TOKEN:
-        return _ignore("corps sans jeton en tête : ignorer")
+    if _token_index(parts) < 0:
+        return _ignore("corps sans jeton porteur d'acte : ignorer")
 
     cid = _as_int(comment.get("id"))
 

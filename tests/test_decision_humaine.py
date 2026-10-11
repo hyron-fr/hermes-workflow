@@ -222,6 +222,46 @@ def test_jeton_hors_tete_ignore(dm):
     assert d["effect"] == "ignore"
 
 
+# --- FAUX NÉGATIF MESURÉ (2026-10-06) : « rattaché /ok » ------------------
+# La consigne du gate de couverture (« commenter ici la décision ») et l'escalade
+# (« Décision attendue ») invitent l'humain à ÉCRIRE, pas à obéir à un format :
+# mesuré en production, un humain a commenté « rattaché /ok » sur l'enfant #31.
+# Avec la règle « jeton en toute première place », la décision a été jugée absente,
+# la carte est restée bloquée, et la seule trace était un `ignore` de tick que
+# l'humain ne voit pas. Le FAUX NÉGATIF est le défaut ; la citation reste refusée.
+
+@pytest.mark.parametrize("corps", (
+    "rattaché /ok",          # le cas mesuré, verbatim
+    "d'accord, /ok",         # une amorce + virgule : le jeton est le 2e élément
+    "/ok rattaché au travail",   # le jeton en tête reste la forme canonique
+    "/OK",
+))
+def test_jeton_apres_une_amorce_decide(dm, corps):
+    """NOMINAL/LIMITE — la position du jeton est de la présentation, pas la décision."""
+    d = dm.decision_from_comment(_ctx_decision(), _c(corps))
+    assert d["effect"] == "unblock", f"{corps!r} porte le jeton comme acte"
+    assert d["task_id"] == "t_aaa"
+
+
+@pytest.mark.parametrize("corps", (
+    "est-ce que /ok est le bon jeton ?",   # cité au 5e élément : une question
+    "vraiment pas /ok",                    # 2e… mais 2 éléments avant ⇒ cité
+    "je crois que /ok /ok /ok",            # répétition noyée
+    "aucune idée de /ok",
+))
+def test_jeton_cite_au_dela_d_une_amorce_ignore(dm, corps):
+    """ERREUR/LIMITE — au-delà d'une amorce, le jeton est cité : aucune décision.
+
+    La tolérance est bornée : sans borne, « est-ce que /ok… » deviendrait un acte.
+    """
+    assert dm.decision_from_comment(_ctx_decision(), _c(corps))["effect"] == "ignore"
+
+
+def test_grammaire_refusee_apres_amorce_reste_refusee(dm):
+    """ERREUR — `/unblock` n'est pas une grammaire, même en second élément."""
+    assert dm.decision_from_comment(_ctx_decision(), _c("décision /unblock"))["effect"] == "ignore"
+
+
 def test_unblock_rejete(dm):
     """ERREUR — grammaire unique : `/unblock` n'est plus une décision, il est ignoré."""
     d = dm.decision_from_comment(_ctx_decision(), _c("/unblock"))

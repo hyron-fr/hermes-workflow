@@ -50,8 +50,13 @@ absente produisent `effect == "ignore"` (ou `"comment"` pour l'humain), jamais u
 
 ## Grammaire (une seule, pas deux)
 
-- **`/ok`** est l'unique jeton de décision, **en tête** du corps (`split()` fait foi,
-  casse indifférente, argument éventuel inerte — `test_argument_supplementaire_ne_retargette_pas`).
+- **`/ok`** est l'unique jeton de décision, **en tête du corps ou immédiatement après
+  UNE amorce** (« rattaché /ok », « d'accord, /ok ») — `split()` fait foi, casse
+  indifférente, argument éventuel inerte (`test_argument_supplementaire_ne_retargette_pas`).
+  Au-delà d'une amorce le jeton est *cité* (« est-ce que /ok est le bon jeton ? ») et ne
+  décide rien : c'est un cas limite du banc. La borne (`TOKEN_PREFIX_MAX`) vient d'un
+  FAUX NÉGATIF mesuré en production : « jeton en toute première place » faisait ignorer
+  en silence une décision écrite par un humain.
 - **`/unblock` est rejeté** (avec `/block`, `/drop`) : `REJECTED_TOKENS`, reconnus
   explicitement pour qu'un futur lecteur ne les réintroduise pas « pour compatibilité ».
   Deux grammaires = une divergence garantie — c'est un point ratifié, pas un détail.
