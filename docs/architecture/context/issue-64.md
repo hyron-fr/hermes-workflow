@@ -15,10 +15,9 @@ board `pj-hermes-workflow`, assignée à `pj-master`), bloquée sur le chantier
 **#19** (« Discord thread title and description update ») via le ticket
 intermédiaire **#22** (« t5 validate », re-import stérile du point conv-5).
 
-C'est une **nouvelle échelle de la chaîne conv-5** déjà documentée par les
-notes [[issue-27]], [[issue-29]], [[issue-41]], [[issue-70]], [[issue-81]] :
-le point à statuer est toujours le **même** — la convergence de la slice 5 de
-#19 (bloc Description épinglé), dont le commit GREEN original `6661362` est
+C'est le **nouvel échelon** de la chaîne conv-5 déjà documentée : le point à
+statuer est toujours le **même** — la convergence de la slice 5 de #19
+(bloc Description épinglé), dont le commit GREEN original `6661362` est
 **définitivement perdu** (vérifié 2026-10-11 : `git cat-file -t 6661362` →
 fatal, absent de toutes refs locales/remote/reflog/GitHub).
 
