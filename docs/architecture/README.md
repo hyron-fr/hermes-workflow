@@ -26,6 +26,7 @@ Map of Content du vault `docs/architecture/`. Chaque note de cadrage
 - [[issue-2]] — Rewrite in english (documentation-wide translation).
 - [[issue-2-datation]] — Dating rule for state benches: the anchoring key and INDÉTERMINÉ.
 - [[issue-19]] — Discord thread title and description update (titre + description du thread selon l'état de l'issue).
+- [[issue-11353]] — « t5 validate » : miroir de décision de la carte `t_c7d86a4a` (chantier #19, via re-import) ; point à statuer = convergence slice 5 (GREEN `6661362` perdu, banc 9/10 mesuré 2026-10-12, 1 fix keeper restant : `sync_all_descriptions` ne capture pas l'exception de `specs_reader` localement, + `upsert-desc`/`pin` absentes du helper), `/ok` débloque la carte.
 
 ## Décisions (ADR)
 
